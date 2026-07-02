@@ -1,0 +1,43 @@
+# 向量数据库配置（Chroma）
+# 被 rag/vector_store.py 读取，用于初始化 Chroma 向量库和文档分片
+# 被 utils/config_handler.py 的 load_chroma_config() 加载
+
+# ---- 扫地机器人场景（默认）----
+# Chroma 集合名称（类似数据库的表名）
+collection_name : agent
+
+# Chroma 数据持久化目录（向量数据保存到这个文件夹，重启后不丢失）
+persist_directory : chroma_db
+
+# 知识库源文件所在目录
+data_path : data
+
+# MD5 去重记录文件（记录已处理过的文件 MD5，避免重复加载）
+md5_hex_store : md5.txt
+
+# ---- 苍穹外卖场景（新增）----
+collection_name_sky : agent_sky
+persist_directory_sky : chroma_db_sky
+
+# 苍穹外卖知识库源文件（与 data_path 共用 data/ 目录）
+
+# 苍穹外卖 MD5 去重记录文件
+md5_hex_store_sky : md5_sky.txt
+
+# ---- 公共参数 ----
+# 检索时返回的最相关文档数量（Top-K）
+k :  3
+
+# 允许加载的文件类型
+allow_knowledge_file_type : ["txt","pdf"]
+
+# ---- 文档分片参数 ----
+
+# 每个切片的最大字符数
+chunk_size : 200
+
+# 相邻切片的重叠字符数（保证上下文连贯性）
+chunk_overlap : 20
+
+# 切片分割符（按优先级依次尝试：段落 → 句号 → 问号 → 感叹号 → 空格 → 任意位置）
+separators : ["\n\n","。",".","?","？","!"," ",""]

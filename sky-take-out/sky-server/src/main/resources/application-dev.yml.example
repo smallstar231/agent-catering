@@ -1,0 +1,31 @@
+sky:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: localhost
+    port: 3306
+    database: sky_take_out
+    username: root
+    # ========================================
+    # 请修改为你的 MySQL 密码！
+    # ========================================
+    password: your_mysql_password_here
+  alioss:
+    endpoint: oss-cn-hangzhou.aliyuncs.com
+    # ========================================
+    # 以下三项请替换为你的阿里云 OSS 凭据
+    # 访问 https://ram.console.aliyun.com/ 申请
+    # ========================================
+    access-key-secret: your_aliyun_oss_secret_here
+    access-key-id: your_aliyun_oss_key_id_here
+    bucket-name: your-bucket-name
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+  wechat:
+    # ========================================
+    # 请替换为你的微信小程序凭据
+    # 访问 https://mp.weixin.qq.com/ 获取
+    # ========================================
+    appid: your_wechat_appid_here
+    secret: your_wechat_secret_here

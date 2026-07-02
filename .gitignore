@@ -1,0 +1,113 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Runtime generated data
+# =========================
+chroma_db/
+chroma_db_sky/
+
+# Optional: if you later generate temp reports locally
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+
+# =========================
+# Claude Code
+# =========================
+.claude/
+memory/
+
+# =========================
+# Session data (don't push chat history)
+# =========================
+data/sessions/
+
+# =========================
+# Learning materials
+# =========================
+z_studying/
+
+# =========================
+# Spring Boot / Maven (Java)
+# =========================
+sky-take-out/**/target/
+sky-take-out/**/*.jar
+sky-take-out/**/*.war
+sky-take-out/.idea/
+sky-take-out/.git/
+sky-take-out/build_temp/
+!sky-take-out/**/src/main/
+
+# =========================
+# Spring Boot 配置文件（含真实凭据，不上传）
+# =========================
+**/application-dev.yml
+**/application-prod.yml
+!**/application.yml.example
+!**/application-dev.yml.example
+
+# =========================
+# Vue frontend
+# =========================
+sky-admin-front/node_modules/
+sky-admin-front/dist/
+sky-admin-front/.git/
+sky-admin-front/*.log
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+
+# =========================
+# OS junk
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Local build artifacts
+# =========================
+sky-server-temp.jar

@@ -1,0 +1,9 @@
+# RAG 和模型配置
+# 被 model/factory.py 读取，用于初始化 LLM 和 Embedding 模型
+# 被 utils/config_handler.py 的 load_rag_config() 加载
+
+# LLM 对话模型名称（阿里云百炼 DashScope 平台的模型 ID）
+chat_model_name: qwen3.5-plus
+
+# Embedding 向量化模型名称（将文本转为向量的模型）
+embedding_model_name: text-embedding-v4

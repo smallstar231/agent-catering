@@ -1,0 +1,24 @@
+# 提示词文件路径配置
+# 被 utils/prompt_loader.py 读取，用于定位三个提示词文件
+# 被 utils/config_handler.py 的 load_prompts_config() 加载
+
+# 普通问答场景的系统提示词
+main_prompt_path : prompts/main_prompt.txt
+
+# RAG 总结场景的提示词模板（含 {input} 和 {context} 变量）
+rag_summarize_prompt_path : prompts/rag_summarize.txt
+
+# 报告生成场景的系统提示词
+report_prompt_path : prompts/report_prompt.txt
+
+# ---- 苍穹外卖场景提示词（新增）----
+# 当 config/agent.yml 的 scene: sky 时使用
+
+# 苍穹外卖普通问答场景的系统提示词
+main_prompt_sky_path : prompts/main_prompt_sky.txt
+
+# 苍穹外卖 RAG 总结场景的提示词模板
+rag_summarize_sky_path : prompts/rag_summarize_sky.txt
+
+# 苍穹外卖报告生成场景的系统提示词
+report_prompt_sky_path : prompts/report_prompt_sky.txt
