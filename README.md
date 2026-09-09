@@ -21,7 +21,7 @@
 
 | 端 | 技术栈 | 职责 |
 |---|--------|------|
-| **🤖 Python Agent** | FastAPI + LangChain + Chroma + DashScope | AI 引擎：ReAct 推理、19 个工具、双路 RAG（文本 + 多模态图文）、SSE 流式、上传识图/文件 |
+| **🤖 Python Agent** | FastAPI + LangChain + Chroma + DashScope | AI 引擎：ReAct 推理、16 个真实工具（含只读 DB 查询）、双路 RAG（文本 + 多模态图文）、SSE 流式、上传识图/文件 |
 | **☕ Spring Boot 后端** | Java 8 + Spring Boot 2.7 + MyBatis | 苍穹外卖业务 REST API（admin/user 双端） |
 | **🖥️ Vue 前端** | Vue 2.6 + TypeScript + Element UI | 管理后台 + **AI 智能客服对话页** + **AI 配置/运维管理页** |
 
@@ -34,7 +34,7 @@
 Python Agent (:8000)  ────────────────────────────────┐
    │                                                   │
    ├─ ReAct Agent：Thought→Action→Observation 循环      │
-   │   19 工具（RAG/菜品/订单/报表/联网/读图/文件/代码沙箱…）│
+   │   16 工具（RAG/只读DB查询/菜品/订单/报表/联网/读图/文件/代码沙箱）│
    ├─ RAG 双路检索：                                    │
    │   · 文本库  text-embedding-v4（Chroma）            │
    │   · 图文库  qwen3-vl-embedding 2560维（Chroma）     │
@@ -55,7 +55,8 @@ Python Agent (:8000)  ───────────────────�
 | 特性 | 说明 |
 |---|---|
 | **ReAct 推理** | Thought→Action→Observation 循环，自主选工具；支持思考链(reasoning)回流 |
-| **19 个工具** | RAG 检索、菜品/套餐/分类/订单查询、报表生成、天气、**真实联网搜索**、**网页正文**、**读图**、**FAQ 精确命中**、**txt/pdf 解析**、**代码沙箱**、外部数据拉取 |
+| **16 个工具** | RAG 检索、**只读数据库查询(db_query, Agent 自主写 SQL 查业务库)**、菜品/套餐/分类/订单查询、报表生成、**真实联网搜索**、**网页正文**、**读图**、**FAQ 精确命中**、**txt/pdf 解析**、**受限代码沙箱**、真实当前年月 |
+| **Agent 真实日期** | 每次对话注入系统真实日期，LLM 推算"今天/今年/本月"不再凭记忆猜（曾把今年当 2025） |
 | **双场景** | `scene` 切换「苍穹外卖(sky)」/「机器人(robot)」，各配独立提示词 + 知识库 |
 | **多模态图文 RAG** | qwen3-vl-embedding 融合向量，**以文搜图**；PDF 内嵌图自动抽取入库；命中图由后端保证回显 |
 | **Rerank 精排** | 高召回 → gte-rerank-v2 交叉精排 → Top-K 喂 LLM（可开关、带 fallback） |
@@ -95,18 +96,19 @@ LangChain-ReAct-Agent/
 ├── start_all_services.py        # 一键启动 Python + Spring Boot + Vue
 │
 ├── agent/
-│   ├── react_agent.py           #   ReAct Agent：组装模型+提示词+19工具+3中间件，SSE 事件流
+│   ├── react_agent.py           #   ReAct Agent：组装模型+提示词+16工具+3中间件+真实日期注入，SSE 事件流
 │   └── tools/
-│       ├── agent_tools.py       #   通用/苍穹外卖业务工具 + sky 登录(读.env)
+│       ├── agent_tools.py       #   苍穹外卖业务工具 + sky 登录(读.env) + get_current_month(真实日期)
+│       ├── db_query.py          #   只读数据库查询（Agent 自主写 SELECT 查业务库，表白名单+防注入）
 │       ├── middleware.py        #   工具监控 / 模型日志 / 动态提示词切换
 │       ├── web_search.py        #   真实联网（Tavily）
 │       ├── page_reader.py       #   网页正文（含 SSRF 防护）
 │       ├── describe_image/vision.py # 读图（qwen-vl）
 │       ├── file_reader.py       #   txt/pdf 附件解析
 │       ├── faq_tool.py          #   FAQ 精确命中
-│       ├── code_sandbox.py      #   受限 Python 沙箱（子进程+黑名单+超时）
+│       ├── code_sandbox.py      #   受限 Python 沙箱（AST 静态预检 + 纯计算库白名单 + 子进程+超时）
 │       ├── mcp_client_tool.py   #   外部 MCP 工具挂载
-│       └── ...（get_weather 等通用小工具）
+│       └── ...（纯计算工具；早期模拟工具 weather/location 等已移除）
 │
 ├── rag/
 │   ├── vector_store.py          #   文本向量库：Chroma + text-embedding-v4 + MD5 去重
@@ -223,7 +225,8 @@ scene: sky     # 苍穹外卖客服（默认）
 |---|---|
 | **文件上传** | 扩展名白名单 + 文件头魔数校验 + uuid 落盘；kb 上传对文件名 basename 白名单防路径穿越 |
 | **SSRF 防护** | `page_reader`/`file_reader` 拒内网/环回/保留地址，可配置白名单主机 |
-| **代码沙箱** | 子进程 + 15s 超时 + import 黑名单 + 受限 builtins，非完全隔离 |
+| **代码沙箱** | AST 静态预检（拦 open/eval/exec/__class__ 逃逸链/危险 import）+ 纯计算库白名单 import（json/re/math 等）+ 子进程 15s 超时 + 输出截断；非容器级隔离 |
+| **数据库只读** | `db_query` 仅允许单条 SELECT、表白名单（禁 employee/user 敏感表）、强制 LIMIT≤100、禁 LOAD_FILE/SLEEP/系统表；生产建议配最小权限只读账号 |
 | **管理接口鉴权** | `/ai/*` 支持 `AI_ADMIN_TOKEN` opt-in 强制校验（`X-AI-Admin-Token` 头，常量时间比较）；未配置则放行 |
 | **凭据不入库** | `.env`、`application-dev.yml` 已 gitignore；苍穹外卖登录密码从 env 读取，无硬编码兜底 |
 
