@@ -110,12 +110,35 @@ def save_session_to_disk(messages: list, round_count: int, session_id: str | Non
             row = conn.execute("SELECT created_at, user_id FROM sessions WHERE id=?", (session_id,)).fetchone()
             created_at = row["created_at"] if row else ts
             owner = row["user_id"] if row else user_id
+
+            # ★ 判断本次是否"真新增/变化了消息"：
+            #   只有消息确实变化才刷新 updated_at，否则保留原值。
+            #   原因：前端在"点击历史会话/新建会话"前会先 save 一次当前会话（防丢），
+            #   若内容未变仍刷新 updated_at，会导致会话时间随点击而跳变，
+            #   而不是以"最后一条聊天时间"为准。
+            changed = True
+            prev_updated = None
+            if row:
+                prev_updated = row["created_at"]  # 占位，下方查真实 updated_at
+            # 读库中已有 updated_at 与消息数，判断内容是否有实质变化
+            prev_row = conn.execute("SELECT updated_at FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if prev_row and prev_row["updated_at"]:
+                prev_updated = prev_row["updated_at"]
+                prev_msgs = conn.execute(
+                    "SELECT role, content FROM messages WHERE session_id=? ORDER BY id ASC", (session_id,)
+                ).fetchall()
+                cur_msgs = [(m.get("role", "user"), m.get("content", "")) for m in messages]
+                prev_list = [(r["role"], r["content"]) for r in prev_msgs]
+                # 逐条比较（顺序敏感）；完全相同 = 无变化
+                changed = cur_msgs != prev_list
+            new_updated = ts if changed else (prev_updated or ts)
+
             conn.execute(
                 """INSERT INTO sessions(id,user_id,title,created_at,updated_at,round_count)
                    VALUES(?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      title=excluded.title, updated_at=excluded.updated_at, round_count=excluded.round_count""",
-                (session_id, owner, title, created_at, ts, round_count),
+                (session_id, owner, title, created_at, new_updated, round_count),
             )
             # 消息整体替换（先删后插，保证与前端 messages 一致）
             conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))

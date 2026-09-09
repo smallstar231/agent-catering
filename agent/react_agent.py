@@ -10,9 +10,10 @@ from utils.config_handler import agent_conf          # Agent 配置（读取 sce
 from utils.logger_handler import logger              # 日志记录器
 from utils.history_compressor import compress_history  # 会话历史压缩（长对话防爆窗）
 
-# 导入 7 个通用工具函数
-from agent.tools.agent_tools import (rag_summarize, get_weather, get_user_location, get_user_id,
-                                     get_current_month, fetch_external_data, fill_context_for_report)
+# 导入通用工具（rag / 当前年月(真实) / 报表触发）。注：早期 get_weather/get_user_location/
+# get_user_id/fetch_external_data 为"测试工具调用"而造的模拟数据工具，已从注册列表移除，
+# 避免向用户返回编造数据（函数定义仍留在 agent_tools.py 供参考）。
+from agent.tools.agent_tools import rag_summarize, get_current_month, fill_context_for_report
 # 导入 6 个苍穹外卖工具函数
 from agent.tools.agent_tools import (sky_rag_summarize, sky_query_dish, sky_query_category,
                                      sky_query_setmeal, sky_query_order, sky_generate_report)
@@ -46,9 +47,8 @@ class ReactAgent:
         else:
             base_prompt = load_system_prompts()
 
-        # 基础工具列表：7 个通用工具 + 6 个苍穹外卖工具 + 5 个增强工具 + 只读 DB 查询
-        tools = [rag_summarize, get_weather, get_user_location, get_user_id,
-                 get_current_month, fetch_external_data, fill_context_for_report,
+        # 基础工具列表：rag / 当前年月(真实) / 报表触发 + 6 苍穹外卖工具 + 增强工具 + 只读 DB 查询
+        tools = [rag_summarize, get_current_month, fill_context_for_report,
                  sky_rag_summarize, sky_query_dish, sky_query_category,
                  sky_query_setmeal, sky_query_order, sky_generate_report,
                  web_search, page_read, describe_image, read_file, faq_lookup, run_python,
@@ -145,6 +145,17 @@ class ReactAgent:
 
         # 构造输入消息列表
         messages = []
+        # ★ 注入真实当前日期：LLM 无实时时钟，会凭训练记忆"猜"年份（实测曾把今年猜成 2025）。
+        #   在每次对话最前放一条 system 消息给出真实日期，作为模型推算"今天/今年/本月"的锚点。
+        import datetime as _dt
+        _today = _dt.date.today()
+        _week = ('一', '二', '三', '四', '五', '六', '日')[_today.weekday()]
+        messages.append({
+            "role": "system",
+            "content": f"当前真实日期：{_today.isoformat()}（星期{_week}）。"
+                       "凡是涉及今天/今天几号/今年/本月/最近N天等时间基准的问题，一律以此为准，"
+                       "不要凭记忆猜测当前年份或月份。",
+        })
         if clean_history:
             messages.extend(clean_history)
         # 追加当前用户消息（query 非文本时给空串，避免 langchain 崩溃）

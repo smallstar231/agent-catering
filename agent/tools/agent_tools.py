@@ -79,15 +79,16 @@ def get_user_id() -> str:
     return random.choice(user_ids)
 
 
-# ---- 工具 5：获取当前月份（模拟数据） ----
-@tool(description="获取当前月份，以纯字符串形式返回")
+# ---- 工具 5：获取当前年月（真实日期） ----
+@tool(description="获取当前真实年月，以字符串形式返回，格式 YYYY-MM（如 2026-09）。凡涉及当前/本月/今年/今天 等时间基准，请先调用本工具确认，不要凭记忆猜测年份或月份")
 def get_current_month() -> str:
     """
-    获取当前月份（当前为模拟数据，随机返回一个月份）
+    获取当前真实年月（用系统时钟，非模拟）
     入参：无
-    返回：月份字符串，格式 "YYYY-MM"
+    返回：当前年月字符串，格式 "YYYY-MM"
     """
-    return random.choice(month_arr)
+    import datetime
+    return datetime.date.today().strftime("%Y-%m")
 
 
 # ---- 内部函数：加载外部用户数据 ----
