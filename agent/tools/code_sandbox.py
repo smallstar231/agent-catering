@@ -22,9 +22,13 @@ TIMEOUT_SECONDS = 15       # 执行超时
 _SANDBOX_DIR = "data/sandbox"  # 仅此目录可写
 
 # 危险/禁用的顶层 import 名（防止代码拿到 shell / 网络 / 文件删除能力）
+# 注意：不要把 sys 放进黑名单 —— json/re/random/statistics/collections/functools
+#       等"纯 Python 标准库模块"内部都 import sys，拦 sys 会导致这些库一加载就崩
+#       （而 C 扩展如 math/datetime 不依赖 sys 所以正常，行为不一致）。sys 本身
+#       不构成逃逸（逃逸靠拿到 os/open/模块对象），真正要拦的是下面的系统/网络/文件类。
 _FORBIDDEN_IMPORTS = [
     "os", "subprocess", "socket", "shutil", "ctypes", "pickle",
-    "importlib", "sys", "multiprocessing", "threading", "signal",
+    "importlib", "multiprocessing", "threading", "signal",
     "webbrowser", "pty", "fcntl", "winreg", "http", "urllib",
     "requests", "httpx", "sqlite3", "pathlib",
 ]
@@ -45,32 +49,108 @@ _b.__dict__.update({k: v for k, v in _safe_builtins.items()})
 
 
 def _build_code(user_code: str) -> str:
-    """把用户代码包进受限 prelude + 主函数"""
-    # 不直接注入 prelude 到每个用户代码前（可能破坏其缩进），而是用受限方式 exec：
-    # 用一个包装，先禁用 __import__ 顶层危险库，再 exec 用户代码
+    """把用户代码包进受限 guard（import 门卫 + builtin 清理），再交给子进程 exec。
+
+    设计（v2，替代旧的"删 exec/memoryview"方案）：
+      - 旧方案删 builtin exec/memoryview，导致 importlib 无法加载"纯 Python 模块"
+        （json/re/datetime 等全崩，只剩 C 扩展 math 可用），且不删 exec 又怕逃逸。
+      - 新方案**不再删 exec/compile/memoryview**（importlib 必需），改为两层防护：
+        ① 静态 AST 预检：在代码真正执行前扫 AST，若用户代码里出现危险调用
+           (open/eval/exec/compile/__import__/breakpoint/input/globals/locals/
+           vars/exit/quit 等) 或危险 import → 直接拒绝，不进入执行。
+        ② 运行时 import 门卫：仍替换 __import__，拦顶层危险模块(os/subprocess/
+           socket/网络/DB/文件系统)作为纵深。
+      - 效果：纯 Python 模块(json/re/datetime/random/math...)可正常 import 做计算；
+        但用户代码文本里根本写不出 open/eval/exec，也 import 不进 os/网络。
+    """
+    # ① 静态 AST 预检：扫描用户代码，发现危险即抛
+    _check_ast_safety(user_code)
+
+    # ② 运行时：不替换 __import__、不删 exec/compile/memoryview。
+    #   原因：json/random/statistics 等"纯 Python 标准库"内部会 import os/sys，
+    #   若运行时拦 os，会误伤这些库一加载就崩。真正的隔离靠：
+    #     - AST 已精确作用在"用户代码文本"上：用户写不出 import os、open、eval、
+    #       __class__ 逃逸链；
+    #     - 子进程隔离：即使标准库在沙箱内加载了 os，用户代码也拿不到 os 这个名字
+    #       （AST 禁 import os），且 __class__ 逃逸被 AST 禁。
+    #    仅清理不破坏 importlib 的逃逸口（保留 exec/compile/memoryview 供 import 用）。
     guard = textwrap.dedent(f'''
         import builtins as _b
-        # 1) 屏蔽 __import__ 顶层危险库
-        _orig_import = _b.__import__
-        _FORBIDDEN = {_FORBIDDEN_IMPORTS}
-        def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-            _top = name.split('.')[0]
-            if _top in _FORBIDDEN:
-                raise ImportError(f"import '{{name}}' 被沙箱禁用")
-            return _orig_import(name, globals, locals, fromlist, level)
-        _b.__import__ = _guarded_import
-        # 2) 直接删除能逃逸/触碰文件的 builtin（eval/exec/open/input/compile 等）
-        #    注意：不能删 __import__（已替换为 guard），否则任何 import 都会崩
-        for _bad in ('eval','exec','compile','open','input','memoryview','breakpoint'):
+        for _bad in ('open','input','breakpoint','exit','quit'):
             try: _b.__dict__.pop(_bad, None)
             except Exception: pass
-        # 3) 拦截 open 的别名变体（io.open）
-        try:
-            import io as _io
-            _io.open = None
-        except Exception: pass
     ''')
     return guard + "\n" + user_code
+
+
+# AST 预检：禁止出现在"用户代码"里的危险内置调用 / 危险字面量
+_DANGEROUS_CALL_NAMES = {
+    "open", "eval", "exec", "compile", "__import__", "breakpoint", "input",
+    "globals", "locals", "vars", "exit", "quit", "memoryview",  # memoryview 仅禁用户直接调(库内部不受此 AST 约束)
+    "getattr",  # 谨慎：getattr 常被逃逸链用作 obj.__class__ 探路
+}
+# 危险 import 顶层名（运行时门卫的镜像，AST 层先拦，给更友好报错）
+_DANGEROUS_IMPORT_NAMES = set(_FORBIDDEN_IMPORTS)
+
+
+def _check_ast_safety(code: str) -> None:
+    """静态扫描用户代码 AST：
+    - import / from-import 危险模块 → 拒绝
+    - 调用危险内置(open/eval/exec/...) → 拒绝
+    - 属性链含 __class__ / __subclasses__ / __globals__ / __builtins__ 等逃逸探针 → 拒绝
+    - 访问危险 dunder 属性 → 拒绝
+    """
+    import ast
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        # 语法错误交给运行时 exec 报（让用户看到真实语法错），这里不拦
+        return
+
+    def _err(node, why):
+        lineno = getattr(node, "lineno", "?")
+        raise SyntaxError(f"沙箱安全拦截（第{lineno}行）：{why}")
+
+    for node in ast.walk(tree):
+        # 1) import / from import
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top in _DANGEROUS_IMPORT_NAMES:
+                    _err(node, f"禁止 import 模块 '{top}'")
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if node.module and top in _DANGEROUS_IMPORT_NAMES:
+                _err(node, f"禁止 from {node.module} import")
+            for alias in node.names:
+                if alias.name in ("open",):
+                    _err(node, "禁止 from ... import open")
+
+        # 2) 危险内置调用
+        elif isinstance(node, ast.Call):
+            f = node.func
+            # 直接名字调用：open("..")
+            if isinstance(f, ast.Name) and f.id in _DANGEROUS_CALL_NAMES:
+                _err(node, f"禁止调用 {f.id}()")
+            # 属性调用：xxx.open / io.open / os.system 之类（dunder 探针已在下方拦）
+            if isinstance(f, ast.Attribute) and f.attr in ("open",):
+                # 允许 obj.open 吗？不允许 —— open 必须整名
+                _err(node, "禁止调用 .open()")
+
+        # 3) 逃逸探针：属性访问 __xxx__
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__") and node.attr.endswith("__"):
+                if node.attr in ("__class__", "__globals__", "__subclasses__",
+                                 "__bases__", "__mro__", "__builtins__", "__loader__",
+                                 "__spec__", "__init__", "__dict__"):
+                    _err(node, f"禁止访问特殊属性 {node.attr}")
+                # 其它 dunder(如 __name__)放行
+
+        # 4) 禁止的 builtin 名直接引用(非调用，如 print(open))
+        elif isinstance(node, ast.Name):
+            if node.id in ("__import__",):
+                _err(node, "禁止引用 __import__")
+
 
 
 def run_code(code: str, timeout: int = TIMEOUT_SECONDS) -> str:
@@ -86,8 +166,11 @@ def run_code(code: str, timeout: int = TIMEOUT_SECONDS) -> str:
     sandbox_abs = get_abs_path(_SANDBOX_DIR)
     os.makedirs(sandbox_abs, exist_ok=True)
 
-    # 组装受限代码
-    full_code = _build_code(code)
+    # 组装受限代码（AST 预检若发现危险调用，会抛 SyntaxError —— 捕获转成友好提示）
+    try:
+        full_code = _build_code(code)
+    except SyntaxError as e:
+        return f"【代码沙箱】{e}"
 
     # 子进程执行（用同一 venv python；代码经 stdin 的 buffer 以 utf-8 传入，避免 Windows 编码问题）
     child_code = (

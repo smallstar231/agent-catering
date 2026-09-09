@@ -18,6 +18,8 @@ from agent.tools.agent_tools import (sky_rag_summarize, sky_query_dish, sky_quer
                                      sky_query_setmeal, sky_query_order, sky_generate_report)
 # 导入 5 个新增增强工具（真实联网 / 网页正文 / 读图 / FAQ 精确问答 / 上传文件解析）+ 安全代码沙箱
 from agent.tools.agent_tools import web_search, page_read, describe_image, faq_lookup, read_file, run_python
+# 导入只读数据库查询工具（Agent 自主写 SQL 查应用业务数据，仅 SELECT）
+from agent.tools.db_query import db_query
 # 导入 3 个中间件
 from agent.tools.middleware import monitor_tool, log_before_model, report_prompt_switch
 
@@ -44,12 +46,13 @@ class ReactAgent:
         else:
             base_prompt = load_system_prompts()
 
-        # 基础工具列表：7 个通用工具 + 6 个苍穹外卖工具 + 5 个增强工具
+        # 基础工具列表：7 个通用工具 + 6 个苍穹外卖工具 + 5 个增强工具 + 只读 DB 查询
         tools = [rag_summarize, get_weather, get_user_location, get_user_id,
                  get_current_month, fetch_external_data, fill_context_for_report,
                  sky_rag_summarize, sky_query_dish, sky_query_category,
                  sky_query_setmeal, sky_query_order, sky_generate_report,
-                 web_search, page_read, describe_image, read_file, faq_lookup, run_python]
+                 web_search, page_read, describe_image, read_file, faq_lookup, run_python,
+                 db_query]
 
         # 可选：挂载外部 MCP 工具（config/agent.yml -> enable_mcp_tools）
         # 默认关闭，避免每次启动额外拉起 MCP server 拖慢；需要时置 true 并在 config 配好
