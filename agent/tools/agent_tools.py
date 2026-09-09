@@ -180,11 +180,12 @@ _sky_token: str | None = None
 _sky_login_url = "http://localhost:8080/admin/employee/login"
 
 # 从环境变量读取管理员凭证，避免硬编码凭据泄露
-# 可在 .env 文件中设置: SKY_ADMIN_USERNAME=admin  SKY_ADMIN_PASSWORD=yourpassword
+# 必须显式在 .env 设置 SKY_ADMIN_USERNAME / SKY_ADMIN_PASSWORD；
+# 密码缺省为空（不用脆默认密码 123456 兜底），未配置则登录失败并在日志提示。
 import os as _os
 _sky_login_data = {
     "username": _os.getenv("SKY_ADMIN_USERNAME", "admin"),
-    "password": _os.getenv("SKY_ADMIN_PASSWORD", "123456"),
+    "password": _os.getenv("SKY_ADMIN_PASSWORD", ""),
 }
 
 
@@ -195,6 +196,9 @@ def _sky_refresh_token():
     """
     global _sky_token
     try:
+        if not (_sky_login_data.get("password") or ""):
+            logger.error("[_sky_refresh_token]未配置 SKY_ADMIN_PASSWORD（请在 .env 设置），跳过登录")
+            return
         import urllib.request
         import json
 

@@ -411,9 +411,10 @@ export default class extends Vue {
   private async viewSession(row: any) {
     this.sessionMsgs = []
     try {
-      const res = await fetch(`http://localhost:8000/sessions/${row.id}`, {
-        headers: { 'X-User-Id': this.sessionUser }
-      })
+      const headers: Record<string, string> = { 'X-User-Id': this.sessionUser }
+      const tok = (process.env.VUE_APP_AI_ADMIN_TOKEN || '').trim()
+      if (tok) headers['X-AI-Admin-Token'] = tok
+      const res = await fetch(`http://localhost:8000/sessions/${row.id}`, { headers })
       const d = await res.json()
       this.sessionMsgs = d.messages || []
       this.sessionDialog = true

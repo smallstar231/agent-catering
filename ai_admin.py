@@ -12,9 +12,12 @@ from typing import Optional
 
 import yaml
 
+from fastapi import Depends  # 管理鉴权依赖
+
 from utils.path_tool import get_abs_path
 from utils.logger_handler import logger
 from utils import config_handler
+from utils.admin_auth import require_admin_token  # opt-in 管理 token 校验
 
 router = APIRouter(prefix="/ai", tags=["ai-admin"])
 
@@ -71,7 +74,7 @@ def _dset(d: dict, path: str, value):
 
 
 # ================= GET /ai/config =================
-@router.get("/config")
+@router.get("/config", dependencies=[Depends(require_admin_token)])
 def get_ai_config():
     """汇总返回当前可配置能力（供前端展示与编辑）"""
     return {
@@ -135,7 +138,7 @@ _MODEL_LABELS = {
 }
 
 
-@router.get("/model-options")
+@router.get("/model-options", dependencies=[Depends(require_admin_token)])
 def get_model_options():
     """返回 4 类模型的当前值 + 可选候选，供前端下拉配置"""
     from utils.config_handler import rag_conf as _rc
@@ -182,7 +185,7 @@ class AiConfigUpdate(BaseModel):
     items: list[ConfigItem]
 
 
-@router.put("/config")
+@router.put("/config", dependencies=[Depends(require_admin_token)])
 def put_ai_config(req: AiConfigUpdate):
     """按 dotted path 批量写回 config yml。请求体：{"items":[{"file":"rag","path":"rerank.enabled","value":false}]}
     写前自动备份 .bak。
@@ -220,7 +223,7 @@ def put_ai_config(req: AiConfigUpdate):
 
 
 # ================= GET /ai/kb =================
-@router.get("/kb")
+@router.get("/kb", dependencies=[Depends(require_admin_token)])
 def get_ai_kb():
     """两场景向量库信息 + 源文件列表"""
     result = {}
@@ -268,7 +271,7 @@ def get_ai_kb():
 _MAX_KB_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB（文本/单图足够）
 
 
-@router.post("/kb/upload")
+@router.post("/kb/upload", dependencies=[Depends(require_admin_token)])
 def upload_kb_file(
     scene: str = Form(...),          # robot | sky
     kind: str = Form("auto"),        # text | image | pdf | auto
@@ -277,8 +280,10 @@ def upload_kb_file(
     if scene not in ("robot", "sky"):
         raise HTTPException(status_code=400, detail="scene 需为 robot 或 sky")
     orig_name = (file.filename or "").strip()
+    # NEM-002：防路径穿越——只取纯文件名（剥掉任意目录成分），并拒绝隐藏/保留名
+    orig_name = os.path.basename(orig_name.replace("\\", "/"))
     ext = os.path.splitext(orig_name)[1].lower()
-    if not orig_name or orig_name.startswith("."):
+    if not orig_name or orig_name.startswith(".") or orig_name in (".", ".."):
         raise HTTPException(status_code=400, detail="文件名不合法")
 
     data = file.file.read()
@@ -326,7 +331,7 @@ def upload_kb_file(
 
 
 # ================= GET /ai/faq =================
-@router.get("/faq")
+@router.get("/faq", dependencies=[Depends(require_admin_token)])
 def get_ai_faq():
     """FAQ 问答列表"""
     try:
@@ -338,7 +343,7 @@ def get_ai_faq():
 
 
 # ================= GET /ai/sessions =================
-@router.get("/sessions")
+@router.get("/sessions", dependencies=[Depends(require_admin_token)])
 def list_all_sessions(user_id: Optional[str] = None):
     """会话管理：列出某用户（或全部主要用户）会话。user_id 为空列出全部主要用户。"""
     import utils.session_store as ss
@@ -351,7 +356,7 @@ def list_all_sessions(user_id: Optional[str] = None):
     return {"sessions": sessions, "note": "默认展示 default 用户会话；可按 ?user_id 过滤"}
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", dependencies=[Depends(require_admin_token)])
 def delete_one_session(session_id: str, user_id: Optional[str] = None):
     """删除任意用户会话（管理用，需归属校验一致）"""
     import utils.session_store as ss
@@ -362,7 +367,7 @@ def delete_one_session(session_id: str, user_id: Optional[str] = None):
 
 
 # ================= GET /ai/eval/sample & POST /ai/eval =================
-@router.get("/eval/sample")
+@router.get("/eval/sample", dependencies=[Depends(require_admin_token)])
 def eval_sample():
     from evaluation.dataset import sample_dataset
     return {"samples": sample_dataset()}
@@ -374,7 +379,7 @@ class EvalRequest(BaseModel):
     limit: Optional[int] = 2  # 默认小 limit，避免同步请求过久
 
 
-@router.post("/eval")
+@router.post("/eval", dependencies=[Depends(require_admin_token)])
 def run_ai_eval(req: EvalRequest):
     """触发离线评估（同步；前端请控制 limit 以免超时）"""
     try:

@@ -2,9 +2,15 @@
 // 与 ai-chat 页相同的模式（fetch 到 http://localhost:8000），供 AI配置页各子页复用。
 const AI_BASE = 'http://localhost:8000'
 
+// AI 管理接口鉴权 token（后端 opt-in：.env 配 AI_ADMIN_TOKEN 后强制校验 X-AI-Admin-Token 头）
+// 前端从构建环境 VUE_APP_AI_ADMIN_TOKEN 读取（本地可在 .env.development.local 配置，不入库）。
+const AI_ADMIN_TOKEN: string = (process.env.VUE_APP_AI_ADMIN_TOKEN || '').trim()
+
 async function req(path: string, options: RequestInit = {}) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (AI_ADMIN_TOKEN) headers['X-AI-Admin-Token'] = AI_ADMIN_TOKEN
   const res = await fetch(`${AI_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options
   })
   if (!res.ok) {
@@ -29,7 +35,9 @@ export const uploadKbFile = (scene: string, kind: string, file: File) => {
   fd.append('scene', scene)
   fd.append('kind', kind)
   fd.append('file', file, file.name)
-  return fetch(`${AI_BASE}/ai/kb/upload`, { method: 'POST', body: fd }).then(async (res) => {
+  const headers: Record<string, string> = {}
+  if (AI_ADMIN_TOKEN) headers['X-AI-Admin-Token'] = AI_ADMIN_TOKEN
+  return fetch(`${AI_BASE}/ai/kb/upload`, { method: 'POST', body: fd, headers }).then(async (res) => {
     if (!res.ok) {
       const txt = await res.text().catch(() => '')
       throw new Error(`${res.status}: ${txt.slice(0, 120)}`)

@@ -65,6 +65,8 @@ temp/
 # =========================
 .claude/
 memory/
+# 审计报告（含修复前漏洞细节，不入库）
+.audit/
 
 # =========================
 # Session data (don't push chat history)
