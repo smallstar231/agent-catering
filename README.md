@@ -2,7 +2,7 @@
 
 # LangChain ReAct Agent · 苍穹外卖智能客服
 
-**基于 LangChain + ReAct 范式 + RAG 检索增强的智能客服系统，集成苍穹外卖（SkyTakeOut）全栈业务**
+**基于 LangChain + ReAct + RAG 的智能客服系统，集成苍穹外卖（SkyTakeOut）全栈业务与多模态图文知识库**
 
 </div>
 
@@ -10,102 +10,41 @@
 [![LangChain](https://img.shields.io/badge/LangChain-1.0-green)](https://www.langchain.com/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.3-brightgreen)](https://spring.io/projects/spring-boot)
 [![Vue](https://img.shields.io/badge/Vue-2.6-4fc08d)](https://vuejs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-teal)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
 
 ---
 
 ## 📖 项目简介
 
-本项目是一个 **智能客服全栈系统**，采用 Monorepo 架构整合三大端：
+**智能客服全栈系统**（Monorepo），三大端协同；Python Agent 侧已从纯文本 RAG 演进为 **多模态图文检索 + 工具型 Agent + AI 管理后台**：
 
 | 端 | 技术栈 | 职责 |
 |---|--------|------|
-| **🤖 Python Agent** | LangChain + ReAct + RAG | AI 对话推理引擎，负责理解用户意图、检索知识库、调用工具、生成回复 |
-| **☕ Spring Boot 后端** | Java 8 + Spring Boot 2.7 + MyBatis | 苍穹外卖业务后端，提供 REST API 并转发 AI 请求到 Agent |
-| **🖥️ Vue 前端** | Vue 2.6 + TypeScript + Element UI | 苍穹外卖管理后台，含 AI 智能客服对话页面 |
+| **🤖 Python Agent** | FastAPI + LangChain + Chroma + DashScope | AI 引擎：ReAct 推理、19 个工具、双路 RAG（文本 + 多模态图文）、SSE 流式、上传识图/文件 |
+| **☕ Spring Boot 后端** | Java 8 + Spring Boot 2.7 + MyBatis | 苍穹外卖业务 REST API（admin/user 双端） |
+| **🖥️ Vue 前端** | Vue 2.6 + TypeScript + Element UI | 管理后台 + **AI 智能客服对话页** + **AI 配置/运维管理页** |
 
-### 核心流程
+### 核心架构
 
 ```
 用户 (Vue 前端 :8888)
-   │  HTTP / SSE
+   │  SSE 流式 (/chat/stream)      ← 附件拖拽/粘贴 → :8000 /upload/file
    ▼
-Spring Boot 后端 (:8080)   ←── 苍穹外卖 CRUD 业务
-   │  HTTP 转发
-   ▼
-Python Agent (:8000)       ←── AI 推理
-   │
-   ├── 通义千问 LLM (DashScope)
-   ├── Chroma 向量库 (RAG 检索)
-   ├── 13 个工具函数 (天气/订单/菜品/报表等)
-   └── 3 个中间件 (监控/日志/动态提示词)
-```
-
----
-
-## 🏗️ 项目结构
-
-```
-LangChain-ReAct-Agent/
-│
-├── agent/                          # Python Agent 核心
-│   ├── react_agent.py              #   ReAct Agent 主逻辑（流式执行）
-│   └── tools/
-│       ├── agent_tools.py          #   13 个工具函数（通用 + 苍穹外卖）
-│       └── middleware.py           #   中间件（工具监控/动态提示词切换）
-│
-├── rag/                            # RAG 检索增强
-│   ├── vector_store.py             #   Chroma 向量库 · 文档加载 · MD5 去重
-│   └── rag_service.py              #   RAG 检索 → LLM 总结服务
-│
-├── model/
-│   └── factory.py                  # 模型工厂（ChatTongyi + DashScopeEmbedding）
-│
-├── config/                         # YAML 配置文件
-│   ├── agent.yml                   #   Agent 行为与工具配置（scene 场景切换）
-│   ├── chroma.yml                  #   向量库与检索参数
-│   ├── prompts.yml                 #   提示词模板路径
-│   └── rag.yml                     #   RAG 模型与参数
-│
-├── prompts/                        # 提示词模板
-│   ├── main_prompt.txt             #   默认场景 System Prompt
-│   ├── main_prompt_sky.txt         #   苍穹外卖场景 System Prompt
-│   ├── rag_summarize.txt           #   RAG 总结 Prompt
-│   └── rag_summarize_sky.txt       #   苍穹外卖 RAG 总结 Prompt
-│
-├── utils/                          # 工具函数
-│   ├── config_handler.py           #   YAML 配置加载
-│   ├── file_handler.py             #   文件解析 / Session 管理
-│   └── ...
-│
-├── data/                           # 知识库文档
-│   ├── chroma_db/                  #   Chroma 向量数据持久化
-│   └── chroma_db_sky/              #   苍穹外卖场景向量库
-│
-├── sky-take-out/                   # ☕ Spring Boot 后端（苍穹外卖）
-│   ├── sky-common/                 #   通用模块（工具类、异常处理）
-│   ├── sky-pojo/                   #   实体 / DTO / VO
-│   └── sky-server/                 #   业务逻辑 + API 端点
-│       ├── controller/             #     admin/ + user/ 两层控制器
-│       ├── service/                #     业务逻辑层
-│       ├── mapper/                 #     MyBatis 数据访问层
-│       └── interceptor/            #     JWT 认证拦截器
-│
-├── sky-admin-front/                # 🖥️ Vue 前端（苍穹外卖管理后台）
-│   ├── src/
-│   │   ├── api/                    #    API 请求封装
-│   │   ├── views/                  #    页面组件
-│   │   │   └── ai-chat/           #     AI 智能客服对话页面
-│   │   ├── store/                  #    Vuex 状态管理
-│   │   └── utils/                  #    工具函数
-│   ├── vue.config.js               #    代理配置（转发到 :8080）
-│   └── package.json
-│
-├── api_service.py                  # FastAPI 服务入口（将 Agent 包装为 HTTP API）
-├── app.py                          # Streamlit 应用入口（独立对话界面）
-├── requirements.txt                # Python 依赖
-├── STARTUP.md                      # 🚀 完整启动指南
-└── README.md                       # 本文件
+Python Agent (:8000)  ────────────────────────────────┐
+   │                                                   │
+   ├─ ReAct Agent：Thought→Action→Observation 循环      │
+   │   19 工具（RAG/菜品/订单/报表/联网/读图/文件/代码沙箱…）│
+   ├─ RAG 双路检索：                                    │
+   │   · 文本库  text-embedding-v4（Chroma）            │
+   │   · 图文库  qwen3-vl-embedding 2560维（Chroma）     │
+   │     （以文搜图 + PDF 抽图 + 图回显）                │
+   ├─ Rerank 精排（gte-rerank-v2 交叉排序）             │
+   ├─ 会话管理（SQLite 持久化，按用户隔离）              │
+   └─ AI 管理 API（/ai/*：配置/模型/知识库/FAQ/评测/会话）│
+         ▲                                              │
+   Spring Boot 后端 (:8080)   ← 苍穹外卖业务（登录/菜品/订单/报表）
+   (Vue :8888 也直连 Agent :8000 做对话，绕过 Java 转发)
 ```
 
 ---
@@ -113,140 +52,196 @@ LangChain-ReAct-Agent/
 ## ✨ 核心特性
 
 ### 🤖 AI Agent
-
 | 特性 | 说明 |
 |---|---|
-| **ReAct 推理范式** | Thought → Action → Observation 循环，自主推理并选择工具 |
-| **RAG 检索增强** | Chroma 向量库 + DashScope Embedding，支持知识库问答 |
-| **多工具调用** | 13 个工具：天气查询、用户数据、菜品查询、订单查询、报表生成等 |
-| **双场景切换** | 通过 `scene` 配置切换「通用问答」与「苍穹外卖」两套提示词和知识库 |
-| **动态提示词** | Middleware 根据上下文自动切换 System Prompt |
-| **流式输出** | SSE 协议逐 token 推送，前端实时显示 |
+| **ReAct 推理** | Thought→Action→Observation 循环，自主选工具；支持思考链(reasoning)回流 |
+| **19 个工具** | RAG 检索、菜品/套餐/分类/订单查询、报表生成、天气、**真实联网搜索**、**网页正文**、**读图**、**FAQ 精确命中**、**txt/pdf 解析**、**代码沙箱**、外部数据拉取 |
+| **双场景** | `scene` 切换「苍穹外卖(sky)」/「机器人(robot)」，各配独立提示词 + 知识库 |
+| **多模态图文 RAG** | qwen3-vl-embedding 融合向量，**以文搜图**；PDF 内嵌图自动抽取入库；命中图由后端保证回显 |
+| **Rerank 精排** | 高召回 → gte-rerank-v2 交叉精排 → Top-K 喂 LLM（可开关、带 fallback） |
+| **工具透明** | 前端实时展示"正在调用 XX"气泡；图/附件命中自动展示 |
+| **流式输出** | SSE 逐 token 推送（文本 / 工具事件 / 思考链三类事件） |
+| **历史压缩** | 超字符预算自动裁剪旧轮，保护最近 N 轮语义 |
+| **可选 MCP 工具** | `enable_mcp_tools` 挂载外部 MCP server（faq / kb / web_search） |
 
-### ☕ 苍穹外卖后端 (Spring Boot)
-
-| 特性 | 说明 |
+### 🖥️ AI 管理后台（/ai 页，前端 ai-config）
+| 能力 | 说明 |
 |---|---|
-| **双端 API** | admin（管理端）+ user（用户端）两层 REST 接口 |
-| **JWT 认证** | 管理员 + 普通用户两套 Token 体系 |
-| **Redis 缓存** | 店铺状态、套餐缓存 |
-| **阿里云 OSS** | 文件上传存储 |
-| **Swagger 文档** | Knife4j 接口文档（dev 环境可用） |
-| **AI 客服桥接** | 转发前端请求到 Python Agent 服务 |
+| **AI 能力开关** | 联网搜索、Rerank、MCP、视觉读图模型、会话压缩预算、FAQ 统计 |
+| **模型配置** | 对话 LLM / 文本向量 / **多模态向量** / Rerank / 视觉 五类模型下拉（可自填） |
+| **知识库控制台** | 双场景文本/图文集合统计、源文件列表、**页面上传入库**（txt/pdf/图片 → 自动进文本库或图文库） |
+| **FAQ 管理** | 问答对折叠展示 |
+| **离线评估** | 批量跑 Agent + exact_match & LLM-judge 打分 |
+| **会话历史** | 跨用户查看 / 删除（SQLite） |
 
-### 🖥️ 苍穹外卖前端 (Vue)
+> AI 管理接口默认本地零配置可用；可设 `AI_ADMIN_TOKEN` 开启 opt-in 鉴权（见下"安全"）。
 
-| 特性 | 说明 |
-|---|---|
-| **管理后台** | 员工管理、分类管理、菜品/套餐管理、订单管理 |
-| **AI 聊天页面** | 智能客服对话界面，支持流式 SSE 展示 |
-| **权限路由** | 登录 Token 鉴权 + 路由守卫 |
-| **营业状态** | Redis 实时控制店铺营业/打烊 |
-| **数据统计** | 营业额、销量 Top10 等经营报表 |
+### ☕ 苍穹外卖后端 + 🖥️ Vue 前端
+- 管理端：员工 / 分类 / 菜品 / 套餐 / 订单 / 营业状态 / 数据统计
+- JWT 双 Token（admin + user）、Redis 缓存、阿里云 OSS（历史；附件现主要走 Agent 本地）
+- AI 聊天页支持：流式对话、图片/文件**拖拽或 Ctrl+V 粘贴上传**、会话侧栏持久化
+
+---
+
+## 🗂️ 项目结构（Python Agent 为主）
+
+```
+LangChain-ReAct-Agent/
+│
+├── api_service.py               # FastAPI :8000 入口：/chat /chat/stream /upload/file /sessions /files(静态) 挂 /ai
+├── ai_admin.py                  # AI 管理后台 API（/ai/config · /ai/kb · /ai/kb/upload · /ai/faq · /ai/sessions · /ai/eval）
+├── app.py                       # 独立 Streamlit 对话入口（备选）
+├── mcp_server.py                # 可选 MCP server（stdio，暴露 faq/kb/web_search）
+├── start_all_services.py        # 一键启动 Python + Spring Boot + Vue
+│
+├── agent/
+│   ├── react_agent.py           #   ReAct Agent：组装模型+提示词+19工具+3中间件，SSE 事件流
+│   └── tools/
+│       ├── agent_tools.py       #   通用/苍穹外卖业务工具 + sky 登录(读.env)
+│       ├── middleware.py        #   工具监控 / 模型日志 / 动态提示词切换
+│       ├── web_search.py        #   真实联网（Tavily）
+│       ├── page_reader.py       #   网页正文（含 SSRF 防护）
+│       ├── describe_image/vision.py # 读图（qwen-vl）
+│       ├── file_reader.py       #   txt/pdf 附件解析
+│       ├── faq_tool.py          #   FAQ 精确命中
+│       ├── code_sandbox.py      #   受限 Python 沙箱（子进程+黑名单+超时）
+│       ├── mcp_client_tool.py   #   外部 MCP 工具挂载
+│       └── ...（get_weather 等通用小工具）
+│
+├── rag/
+│   ├── vector_store.py          #   文本向量库：Chroma + text-embedding-v4 + MD5 去重
+│   ├── rag_service.py           #   双路召回（文本+图文）→ 合并 → 总结
+│   ├── rerank.py                #   DashScope text-rerank 精排
+│   ├── multimodal_embedding.py  #   qwen3-vl-embedding 适配器（2560维，图/文/融合）
+│   ├── multimodal_store.py      #   图文集合直插直查（agent_mm/agent_sky_mm）
+│   ├── multimodal_ingest.py     #   图文入库脚本（--scene --rebuild）
+│   └── pdf_image_extractor.py   #   PyMuPDF 抽 PDF 内嵌图
+│
+├── model/factory.py             # ChatOpenAI + DashScopeEmbedding 单例
+├── config/*.yml                 # agent / rag / chroma / conv / prompts 配置
+├── prompts/                     # 普通/RAG/报表 提示词 × 双场景
+├── utils/
+│   ├── config_handler.py        # YAML 加载 → 全局单例（*_conf）
+│   ├── session_store.py         # SQLite 会话库（save/load/delete）
+│   ├── history_compressor.py    # 会话历史压缩
+│   ├── admin_auth.py            # /ai/* opt-in token 鉴权依赖
+│   ├── file_handler.py          # 文件加载 / MD5
+│   ├── prompt_loader.py         # 提示词读取
+│   └── ...
+│
+├── evaluation/                  # 离线评测（dataset / evaluators / run_eval）
+├── data/                        # 知识库源 + 运行时（uploads/ kb/ sessions/ 向量库均 gitignore）
+├── sky-take-out/                # ☕ Spring Boot（sky-common / pojo / server）
+├── sky-admin-front/             # 🖥️ Vue（views/ai-chat, views/ai-config, api/ai.ts）
+├── requirements.txt
+├── STARTUP.md                   # 完整启动指南
+└── README.md
+```
 
 ---
 
 ## 🚀 快速启动
 
-> 完整详细启动步骤见 [STARTUP.md](./STARTUP.md)
+> 完整细节见 [STARTUP.md](./STARTUP.md)
 
-### 依赖概览
+### 依赖
+| 依赖 | 版本 | 用途 |
+|---|---|---|
+| Python | ≥ 3.10（建议 3.12） | Agent 服务 |
+| Java + Maven | ≥ 8 / ≥ 3.6 | Spring Boot |
+| Node.js | ≥ 16 | Vue 前端 |
+| MySQL / Redis | 8.0 / 3.x | 苍穹外卖业务 |
 
-| 依赖 | 版本要求 | 用途 |
-|------|---------|------|
-| Python | ≥ 3.10 | 运行 Agent 服务 |
-| Java | ≥ 8 | 运行 Spring Boot 后端 |
-| Maven | ≥ 3.6 | 构建后端 |
-| Node.js | ≥ 16 | 运行前端 |
-| MySQL | 8.0+ | 业务数据库 |
-| Redis | 3.x+ | 缓存 |
-
-### 启动顺序
-
-```
-① Redis → ② MySQL → ③ Python Agent (:8000) → ④ Spring Boot (:8080) → ⑤ Vue 前端 (:8888)
-```
-
-### 环境变量
-
+### 环境变量（根 `.env`，从 `.env.example` 复制）
 ```bash
-# 必须：阿里云百炼 API Key（Agent 调用 LLM）
-export DASHSCOPE_API_KEY="sk-xxxxx"   # Linux/macOS
-set DASHSCOPE_API_KEY=sk-xxxxx        # Windows
+DASHSCOPE_API_KEY=xxx            # 必须：对话/向量/Rerank/读图共用
+TAVILY_API_KEY=xxx               # 可选：真实联网搜索
+SKY_ADMIN_USERNAME=admin         # 苍穹外卖管理端登录（Agent 调业务 API 用）
+SKY_ADMIN_PASSWORD=xxx           # 必填（不设则 Agent 不尝试登录）
+AI_ADMIN_TOKEN=xxx               # 可选：开启 /ai/* 管理接口鉴权
 ```
+> ⚠️ `.env` 与 `**/application-dev.yml` 已 gitignore，切勿提交。
 
-### 一键启动
-
+### 一键启动（顺序：Redis → MySQL → Agent → Spring → Vue）
 ```bash
-# 终端 1：Python Agent
+python start_all_services.py       # 用项目 .venv 的 python 运行
+# 或分别：
+# ① Python Agent
 .venv\Scripts\uvicorn api_service:app --host 0.0.0.0 --port 8000
+# ② Spring Boot
+java -jar sky-take-out/sky-server/target/sky-server-1.0-SNAPSHOT.jar --spring.profiles.active=dev
+# ③ Vue 前端
+cd sky-admin-front && npx vue-cli-service serve   # :8888
+```
 
-# 终端 2：Spring Boot 后端（先编译打包，再启动 JAR）
-mvn clean install -DskipTests -pl sky-server -am
-java -jar sky-server/target/sky-server-1.0-SNAPSHOT.jar --spring.profiles.active=dev
-
-# 终端 3：Vue 前端
-set NODE_OPTIONS=--openssl-legacy-provider
-npx vue-cli-service serve
+### 多模态图文库初始化（可选）
+```bash
+# 苍穹外卖场景：独立图 + PDF 内嵌图入库到图文集合
+.venv\Scripts\python -m rag.multimodal_ingest --scene sky
+# 清空重建
+.venv\Scripts\python -m rag.multimodal_ingest --scene sky --rebuild
 ```
 
 ### 验证
-
 | 服务 | 地址 | 验证 |
-|------|------|------|
-| Agent | `http://localhost:8000/chat` | `POST {"query":"你好"}` → 返回回复 |
-| 后端 | `http://localhost:8080/admin/employee/login` | 登录 → 获取 JWT Token |
-| Swagger | `http://localhost:8080/doc.html` | 接口文档（dev 环境） |
-| 前端 | `http://localhost:8888` | 管理后台登录 |
+|---|---|---|
+| Agent | `http://localhost:8000/` | `{"status":"ok"}` 健康检查 |
+| 对话 SSE | `POST /chat/stream` | `{"query":"宫保鸡丁多少钱"}` |
+| Swagger | `http://localhost:8000/docs` | FastAPI 交互文档 |
+| 后端 | `http://localhost:8080/admin/employee/login` | 登录取 JWT |
+| 前端 | `http://localhost:8888` | 登录 → **AI 客服** / **AI 配置** |
 
 ---
 
-## ⚙️ 配置说明
+## 🧠 模型与场景
 
-### Python Agent 配置
-
-| 文件 | 配置项 | 说明 |
-|------|--------|------|
-| `config/rag.yml` | `chat_model_name` | LLM 模型（如 qwen3.5-plus） |
-| `config/chroma.yml` | `persist_directory` | 向量库存储路径 |
-| `config/agent.yml` | `scene` | 场景切换：`robot` 或 `sky` |
-
-### Spring Boot 配置
-
-| 文件 | 配置项 | 说明 |
-|------|--------|------|
-| `application.yml` | JWT 密钥、Redis、MySQL 连接 | 基础配置 |
-| `application-dev.yml` | 阿里云 OSS、微信小程序凭据 | 开发环境配置（勿提交到公开仓库） |
-
----
-
-## 🧠 场景切换
-
-Agent 支持双场景，通过 `config/agent.yml` 中的 `scene` 字段切换：
-
+### 对话模型
+阿里云百炼 OpenAI 兼容接口（`base_url=…/compatible-mode/v1`）。`config/rag.yml`：
 ```yaml
-scene: sky    # 苍穹外卖客服模式（默认）
-# scene: robot  # 扫地机器人问答模式（原始）
+chat_model_name: deepseek-v4-flash   # 默认（思考型）
+# chat_model_name: qwen3.7-max       # 更强
+# chat_model_name: qwen3.7-plus      # 中档
+embedding_model_name: text-embedding-v4   # 文本向量
+vision_model_name: qwen-vl-plus           # 读图
+multimodal:
+  enabled: true
+  model: qwen3-vl-embedding              # 图文向量（2560维；换模型需 --rebuild）
 ```
 
-不同场景加载不同的提示词模板、知识库和工具描述。
+### 场景切换（`config/agent.yml`）
+```yaml
+scene: sky     # 苍穹外卖客服（默认）
+# scene: robot  # 扫地机器人问答
+```
+> 场景决定基础提示词、知识库加载范围（sky 只收"苍穹外卖*"文档）与业务工具集合。
+
+---
+
+## 🔐 安全
+
+| 项 | 说明 |
+|---|---|
+| **文件上传** | 扩展名白名单 + 文件头魔数校验 + uuid 落盘；kb 上传对文件名 basename 白名单防路径穿越 |
+| **SSRF 防护** | `page_reader`/`file_reader` 拒内网/环回/保留地址，可配置白名单主机 |
+| **代码沙箱** | 子进程 + 15s 超时 + import 黑名单 + 受限 builtins，非完全隔离 |
+| **管理接口鉴权** | `/ai/*` 支持 `AI_ADMIN_TOKEN` opt-in 强制校验（`X-AI-Admin-Token` 头，常量时间比较）；未配置则放行 |
+| **凭据不入库** | `.env`、`application-dev.yml` 已 gitignore；苍穹外卖登录密码从 env 读取，无硬编码兜底 |
 
 ---
 
 ## 🛠️ 技术栈总览
 
 | 层级 | 技术 |
-|------|------|
-| **LLM** | 通义千问（DashScope / ChatTongyi） |
-| **Agent 框架** | LangChain + LangGraph |
-| **向量数据库** | Chroma |
-| **AI 服务框架** | FastAPI + Uvicorn |
-| **后端框架** | Spring Boot 2.7.3 + MyBatis |
-| **数据库** | MySQL 8.0 + Druid 连接池 |
-| **缓存** | Redis 3.x |
-| **前端框架** | Vue 2.6 + TypeScript |
-| **UI 组件** | Element UI |
-| **构建工具** | Maven + Vue CLI 3 |
+|---|---|
+| **LLM** | 通义千问系 / deepseek-v4-flash（DashScope OpenAI 兼容） |
+| **Agent 框架** | LangChain + LangGraph + ReAct 中间件 |
+| **向量库** | Chroma（文本 + 多模态图文双集合） |
+| **AI 服务** | FastAPI + Uvicorn + SSE |
+| **搜索/RAG** | Tavily、DashScope text-rerank、qwen3-vl-embedding、PyMuPDF |
+| **后端** | Spring Boot 2.7.3 + MyBatis |
+| **存储** | MySQL 8 + Redis + SQLite（会话） |
+| **前端** | Vue 2.6 + TypeScript + Element UI |
+| **构建** | Maven + Vue CLI |
 
 ---
 
