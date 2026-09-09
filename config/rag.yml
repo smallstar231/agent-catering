@@ -11,3 +11,13 @@ multimodal:
   model: qwen3-vl-embedding
   mm_recall_k: 4
   mm_echo_limit: 2
+  # ---- 图文命中三段式判定（cosine distance 越小越相关）----
+  # 实测参考：真命中约 0.4~0.6，明显无关约 >0.78。
+  # ① strong_distance：distance ≤ 此值 = 强相关，直接回显（不调视觉，省费）
+  # ② max_distance：distance > 此值 = 粗筛丢弃（明显无关不送视觉，省费）
+  # ③ 中间模糊带（strong~max 之间）：若 visual_verify=true，送 qwen-vl 看图精判
+  #    （看图本身内容是否与 query 相关，绕开可能很差的 caption 锚点）；
+  #    为 false 则模糊带按向量相关度全保留（退回纯阈值行为）。
+  mm_max_distance: 0.75
+  mm_strong_distance: 0.55
+  mm_visual_verify: true
