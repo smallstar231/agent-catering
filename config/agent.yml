@@ -1,13 +1,8 @@
-# Agent 配置
-# 被 agent/tools/agent_tools.py 读取，用于定位外部数据文件
-# 被 utils/config_handler.py 的 load_agent_config() 加载
-
-# 场景切换：robot（扫地机器人/默认）| sky（苍穹外卖）
-# 控制 Agent 使用哪套提示词、工具描述指向哪个场景
 scene: sky
-
-# 外部用户数据文件路径（CSV 格式，包含用户使用记录）
 external_data_path: data/external/records.csv
-
-# 会话历史存档目录（session 存档为 JSON 文件，持久化保存）
 session_save_dir: data/sessions
+faq_path: data/苍穹外卖常见问题FAQ.txt
+enable_mcp_tools: true
+mcp_server:
+  transport: stdio
+  url: ''

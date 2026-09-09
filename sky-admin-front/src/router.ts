@@ -1,6 +1,9 @@
 import Vue from "vue";
 import Router from "vue-router";
 import Layout from "@/layout/index.vue";
+
+// 空壳路由视图：用于"父菜单(带下拉)"本身不渲染页面，只透传给子路由
+const EmptyRouterView = { render: (h: any) => h("router-view") };
 import {
   getToken,
   setToken,
@@ -137,15 +140,41 @@ const router = new Router({
           }
         },
         {
-          path: "ai-chat",
-          component: () =>
-            import(/* webpackChunkName: "shopTable" */ "@/views/ai-chat/index.vue"),
+          path: "ai",
+          component: EmptyRouterView,
+          redirect: "/ai/chat",
           meta: {
-            title: "AI 智能客服",
-            icon: "icon-inform"
-          }
+            title: "AI管理",
+            icon: "icon-statistics"
+          },
+          children: [
+            {
+              path: "chat",
+              component: () =>
+                import(/* webpackChunkName: "aiChat" */ "@/views/ai-chat/index.vue"),
+              meta: {
+                title: "智能客服",
+                icon: "icon-inform"
+              }
+            },
+            {
+              path: "config",
+              component: () =>
+                import(/* webpackChunkName: "aiConfig" */ "@/views/ai-config/index.vue"),
+              meta: {
+                title: "AI配置",
+                icon: "icon-inform"
+              }
+            }
+          ]
         }
       ]
+    },
+    {
+      // 兼容旧版 AI 入口路径（改版前为顶层 /ai-chat），避免旧菜单/书签跳 404
+      path: "/ai-chat",
+      redirect: "/ai/chat",
+      meta: { hidden: true }
     },
     {
       path: "*",

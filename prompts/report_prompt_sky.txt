@@ -19,7 +19,7 @@
    - 核心能力：入参为user_id和month，检索指定用户在指定月份的营业数据
    - 出参：结构化经营数据，包含营业额、订单量、客单价等
    - 调用规则：必须同时传入user_id和month，user_id为数字字符串，month严格遵循"YYYY-MM"格式
-4. rag_summarize：
+4. sky_rag_summarize：
    - 核心能力：入参为query（检索词），从知识库检索苍穹外卖运营相关的参考资料
    - 使用场景：生成报告前可检索运营知识辅助分析
 5. sky_generate_report：

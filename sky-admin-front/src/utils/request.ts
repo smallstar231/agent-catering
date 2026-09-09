@@ -23,9 +23,6 @@ service.interceptors.request.use(
     // Add X-Access-Token header to every request, you can add other custom headers here
     if (UserModule.token) {
       config.headers['token'] = UserModule.token
-    } else if (config.url != '/login') {
-      window.location.href = '/login'
-      return false
     }
 
     // config.headers['Access-Control-Allow-Origin'] = '*'

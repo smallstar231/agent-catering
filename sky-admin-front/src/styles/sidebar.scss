@@ -55,14 +55,77 @@
   }
 
   .el-submenu {
+    // 父标题与一级菜单项观感一致：透明背景、同样字号/高度/底部间距，避免出现深色"阴影块"
     >.el-submenu__title {
-      min-width: 190px !important;
-      background-color: #272a36 !important;
+      height: 42px;
+      line-height: 42px;
+      padding-left: 17px !important;
+      margin: 0 0 20px 0;
+      background-color: transparent !important;
+      font-size: 14px !important;
+      color: #aeb5c4;
+
+      &:hover {
+        color: #ffffff !important;
+        background: #4d4d4d !important;
+        border-radius: 4px;
+      }
+
+      i {
+        color: inherit;
+        font-size: 20px;
+        margin-right: 9px;
+      }
+
+      .el-submenu__icon-arrow {
+        color: #aeb5c4;
+        right: 8px;
+      }
     }
 
-    .el-menu-item {
-      min-width: 190px !important;
-      background-color: #272a36 !important;
+    // 展开的子菜单项：给一个与父级/一级不同的圆角深色"面板"，让下拉结构一眼可辨
+    .el-menu {
+      background-color: #1e212b !important;   // 比侧栏(52,55,68)更深的独立面板
+      border-radius: 6px;
+      margin: 0 0 14px 0;
+      padding: 6px 6px 2px !important;
+
+      .el-menu-item {
+        min-width: 100% !important;
+        height: 36px;
+        line-height: 36px;
+        margin: 0 0 2px 0;
+        padding-left: 26px !important;
+        background-color: transparent !important;
+        color: #aeb5c4;
+        border-radius: 4px;
+
+        i {
+          font-size: 16px;
+        }
+
+        &:hover {
+          color: #ffffff !important;
+          background: #3a3e4a !important;
+        }
+      }
+
+      // 激活子项高亮
+      .router-link-active .el-menu-item,
+      .el-menu-item.is-active {
+        background-color: #e3e3e3 !important;
+        color: #333333 !important;
+        font-weight: 500;
+
+        span {
+          color: #333333 !important;
+        }
+
+        &:hover {
+          background-color: #e3e3e3 !important;
+          color: #333333 !important;
+        }
+      }
     }
   }
 

@@ -41,16 +41,27 @@
             item.meta.title
           }}</span>
         </template>
+        <!-- 二级子项：直接渲染 el-menu-item，避免递归的 .menu-wrapper div 嵌套导致 Element 菜单"多空一层" -->
         <template v-if="item.children">
-          <sidebar-item
-            v-for="child in item.children"
+          <sidebar-item-link
+            v-for="child in item.children.filter(c => !c.meta || !c.meta.hidden)"
             :key="child.path"
-            :item="child"
-            :is-collapse="isCollapse"
-            :is-first-level="false"
-            :base-path="resolvePath(child.path)"
-            class="nest-menu"
-          />
+            :to="resolvePath(child.path)"
+          >
+            <el-menu-item
+              :index="resolvePath(child.path)"
+              class="nest-menu"
+            >
+              <i
+                v-if="child.meta && child.meta.icon"
+                class="iconfont"
+                :class="child.meta.icon"
+              />
+              <span v-if="child.meta && child.meta.title" slot="title">{{
+                child.meta.title
+              }}</span>
+            </el-menu-item>
+          </sidebar-item-link>
         </template>
       </el-submenu>
     </div>

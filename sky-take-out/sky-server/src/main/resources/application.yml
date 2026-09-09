@@ -53,6 +53,4 @@ sky:
     appid: ${sky.wechat.appid}
     secret: ${sky.wechat.secret}
 
-  ai:
-    # Python Agent 服务地址
-    agent-url: http://localhost:8000
+  # ai:   ← AI 客服模块已废弃，Vue 前端直连 Python Agent (:8000)，无需后端配置

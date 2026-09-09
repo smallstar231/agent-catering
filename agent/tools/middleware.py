@@ -45,11 +45,76 @@ def monitor_tool(
         if request.tool_call['name'] == "fill_context_for_report":
             request.runtime.context["report"] = True
 
+        # 记录工具调用事件（供 execute_stream_events 流式回传前端做"工具透明"）
+        # 结构：{name, args(截断), result_preview(截断), ok}
+        context = request.runtime.context
+        if "tool_events" not in context:
+            context["tool_events"] = []
+        result_str = result.content if hasattr(result, "content") else str(result)
+        context["tool_events"].append(_tool_event(
+            request.tool_call['name'],
+            request.tool_call.get('args'),
+            result_str,
+            ok=True,
+        ))
+
+        # 关键逻辑：RAG 工具返回若带"相关图片 [图片:url]"行 → 抽取图 URL 进 context，
+        # 供 execute_stream_events 在流结束把图回显到回答末尾（不依赖模型转发标记）。
+        name = request.tool_call['name']
+        if name in ("rag_summarize", "sky_rag_summarize"):
+            _collect_rag_images(result_str, context)
+
         return result
     except Exception as e:
         # 工具执行失败：记录错误日志并重新抛出异常
+        context = request.runtime.context
+        if "tool_events" not in context:
+            context["tool_events"] = []
+        context["tool_events"].append(_tool_event(
+            request.tool_call['name'],
+            request.tool_call.get('args'),
+            f"调用失败：{str(e)}",
+            ok=False,
+        ))
         logger.error(f"工具{request.tool_call['name']}调用失败，原因：{str(e)}")
         raise e
+
+
+def _tool_event(name: str, args, result_str: str, ok: bool) -> dict:
+    """构造一条工具调用事件（入参/结果各截断，避免把大段 JSON 全量回传前端）"""
+    args_str = str(args)[:200] if args is not None else ""
+    result_str = str(result_str)
+    # 结果可能很长（RAG 检索、报表 JSON 等），仅回传摘要给前端做过程提示
+    result_preview = result_str[:200] + ("..." if len(result_str) > 200 else "")
+    return {
+        "name": name,
+        "args": args_str,
+        "result_preview": result_preview,
+        "ok": ok,
+    }
+
+
+# RAG 返回里的相关图片标记形如：
+#   相关图片：
+#   [图片:http://...]
+# 抽取其中 [图片:url] 的 url 存入 context["rag_images"]（去重、保序）。
+_IMG_MARK_RE = __import__("re").compile(r"\[图片:([^\]]+)\]")
+
+
+def _collect_rag_images(result_str: str, context: dict) -> None:
+    try:
+        urls = [m for m in _IMG_MARK_RE.findall(str(result_str)) if m]
+        if not urls:
+            return
+        seen = set(context.get("rag_images", []))
+        cur = list(context.get("rag_images", []))
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                cur.append(u)
+        context["rag_images"] = cur
+    except Exception as e:
+        logger.warning(f"[tool monitor]解析 RAG 图片失败：{str(e)[:100]}")
 
 
 # ---- 中间件 2：模型调用前日志 ----
@@ -86,21 +151,15 @@ def report_prompt_switch(request: ModelRequest):
     # 从运行时上下文中读取 report 标记（默认 False）
     is_report = request.runtime.context.get("report", False)
 
-    # 从配置中读取当前场景（robot=扫地机器人 | sky=苍穹外卖）
     scene = agent_conf.get("scene", "robot")
 
-    if scene == "sky":
-        # 苍穹外卖场景
-        if is_report:
-            # 报告场景：返回苍穹外卖报告提示词（report_prompt_sky.txt）
-            return load_report_prompts_sky()
-        # 普通场景：返回苍穹外卖普通问答提示词（main_prompt_sky.txt）
-        return load_system_prompts_sky()
-
-    # 默认/机器人场景（scene=robot）
     if is_report:
-        # 报告场景：返回扫地机器人报告提示词（report_prompt.txt）
+        # 报告场景 → 切换到报表提示词
+        if scene == "sky":
+            return load_report_prompts_sky()
         return load_report_prompts()
 
-    # 普通场景：返回扫地机器人普通问答提示词（main_prompt.txt）
+    # 普通问答 → 返回当前场景的基础提示词
+    if scene == "sky":
+        return load_system_prompts_sky()
     return load_system_prompts()

@@ -1,0 +1,4 @@
+history_char_budget: 8000
+protected_rounds: 6
+assistant_truncate_chars: 400
+truncate_marker: '...[已截断]'

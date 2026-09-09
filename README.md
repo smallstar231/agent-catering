@@ -181,8 +181,9 @@ set DASHSCOPE_API_KEY=sk-xxxxx        # Windows
 # 终端 1：Python Agent
 .venv\Scripts\uvicorn api_service:app --host 0.0.0.0 --port 8000
 
-# 终端 2：Spring Boot 后端
-mvn spring-boot:run -pl sky-server -am
+# 终端 2：Spring Boot 后端（先编译打包，再启动 JAR）
+mvn clean install -DskipTests -pl sky-server -am
+java -jar sky-server/target/sky-server-1.0-SNAPSHOT.jar --spring.profiles.active=dev
 
 # 终端 3：Vue 前端
 set NODE_OPTIONS=--openssl-legacy-provider

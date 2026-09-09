@@ -24,9 +24,24 @@ persist_directory_sky : chroma_db_sky
 # 苍穹外卖 MD5 去重记录文件
 md5_hex_store_sky : md5_sky.txt
 
+# ---- 多模态图文集合（独立于文本库；qwen3-vl-embedding 2560 维）----
+# 机器人场景
+collection_name_mm : agent_mm
+persist_directory_mm : chroma_db_mm
+md5_hex_store_mm : md5_mm.txt
+# 苍穹外卖场景
+collection_name_mm_sky : agent_sky_mm
+persist_directory_mm_sky : chroma_db_sky_mm
+md5_hex_store_mm_sky : md5_sky_mm.txt
+# 独立图片知识源允许的类型（放 data/ 根目录，按场景前缀过滤）
+allow_multimodal_image_type : ["png","jpg","jpeg","gif","webp","bmp"]
+
 # ---- 公共参数 ----
-# 检索时返回的最相关文档数量（Top-K）
+# 最终返回给 LLM 的最相关文档数量（精排后 Top-K，供 rag_service 使用）
 k :  3
+
+# 召回候选数（首轮向量检索取回更多候选，供 rerank 精排；未开启 rerank 时仍只用 k 个）
+recall_k : 10
 
 # 允许加载的文件类型
 allow_knowledge_file_type : ["txt","pdf"]

@@ -41,6 +41,14 @@ logs/
 # =========================
 chroma_db/
 chroma_db_sky/
+# 多模态向量库（qwen3-vl-embedding）运行时生成
+chroma_db_mm/
+chroma_db_sky_mm/
+# 上传文件 / 上传入库的 KB 文件（运行时数据）
+data/uploads/
+data/kb/
+# 配置备份
+*.bak
 
 # Optional: if you later generate temp reports locally
 tmp/

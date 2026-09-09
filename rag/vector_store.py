@@ -61,13 +61,15 @@ class VectorStoreService:
             length_function=len,
         )
 
-    def get_retriever(self):
+    def get_retriever(self, k: int | None = None):
         """
         获取检索器：用于从向量库中检索与查询最相关的文档
+        入参：k - 返回条数；None 时使用 config/chroma.yml 的 k（默认 3）
         返回：Chroma Retriever 对象，可以调用 .invoke(query) 检索
-        search_kwargs={"k": 3} 表示返回前 3 条最相关的结果
         """
-        return self.vector_store.as_retriever(search_kwargs={"k": chroma_conf["k"]})
+        if k is None:
+            k = chroma_conf["k"]
+        return self.vector_store.as_retriever(search_kwargs={"k": k})
 
     def _get_md5_path(self) -> str:
         """根据场景返回对应的 MD5 记录文件路径"""
@@ -133,16 +135,22 @@ class VectorStoreService:
             return []
 
         # Step 1：扫描 data/ 目录，获取所有 .txt 和 .pdf 文件的完整路径
-        allowed_files_path: list[str] = listdir_with_allowed_type(
+        allowed_types = tuple(chroma_conf["allow_knowledge_file_type"])
+        allowed_files_path: list[str] = list(listdir_with_allowed_type(
             get_abs_path(chroma_conf["data_path"]),
-            tuple(chroma_conf["allow_knowledge_file_type"]),
-        )
+            allowed_types,
+        ))
 
-        # Step 1.5：根据场景过滤文件（机器人场景排除苍穹外卖文档，苍穹外卖场景只加载苍穹外卖文档）
+        # Step 1.2：根据场景过滤文件（机器人场景排除苍穹外卖文档，苍穹外卖场景只加载苍穹外卖文档）
         allowed_files_path = [
             f for f in allowed_files_path
             if self._is_scene_file(os.path.basename(f))
         ]
+
+        # Step 1.4：追加"页面上传入库"目录 data/kb/<scene>/ 下的文件（已按场景目录隔离，不过滤前缀）
+        kb_upload_dir = get_abs_path(os.path.join("data", "kb", self.scene))
+        if os.path.isdir(kb_upload_dir):
+            allowed_files_path += list(listdir_with_allowed_type(kb_upload_dir, allowed_types))
 
         # Step 2：逐个处理文件
         for path in allowed_files_path:
@@ -170,6 +178,16 @@ class VectorStoreService:
                 if not split_document:
                     logger.warning(f"[加载知识库]{path}分片后没有有效文本内容，跳过")
                     continue
+
+                # 为每个分片写入来源元数据（source=文件名, chunk_idx=分片序号）
+                # 供 RAG 引用回显时标注"来自哪个文档"
+                # 注意：PyPDFLoader/TextLoader 自带 source=相对/绝对路径，此处统一覆盖为纯文件名
+                source_name = os.path.basename(path)
+                for i, doc in enumerate(split_document):
+                    doc.metadata["source"] = source_name
+                    doc.metadata["chunk_idx"] = i
+                    # 同时剔除 loader 附带的 source（避免 Chroma 里混有旧值）
+                    doc.metadata.pop("source_file_path", None)
 
                 # 将分片后的文档存入 Chroma 向量库
                 # Chroma 会自动调用 embed_model 将文本转为向量

@@ -514,3 +514,59 @@ def sky_generate_report(report_type: str = "turnover", begin: str | None = None,
     endpoint = endpoint_map.get(report_type, "/report/turnoverStatistics")
     raw = _sky_api_get(endpoint, params)
     return _sky_format_report(raw, report_type)
+
+
+# ============================================================
+# 新增增强工具：真实联网搜索 / 网页正文 / 图片理解 / FAQ 精确问答
+# 由 agent/react_agent.py 注册进 Agent
+# 每个都做了"外部服务不可用时优雅降级"处理，不抛异常
+# ============================================================
+
+from agent.tools.web_search import web_search as _web_search
+from agent.tools.page_reader import page_read as _page_read
+from agent.tools.vision import describe_image as _describe_image
+from agent.tools.faq_tool import faq_lookup as _faq_lookup
+from agent.tools.code_sandbox import run_code as _run_code
+from agent.tools.file_reader import read_file as _read_file
+
+
+# ---- 工具 14：真实联网搜索 ----
+@tool(description="联网搜索实时信息。入参query为搜索关键词。当用户询问最新/今日/新闻/政策变化，或知识库与本地数据无法回答时使用；若提示'联网未启用'表示未配置key")
+def web_search(query: str) -> str:
+    """通过 Tavily 联网搜索，返回标题/链接/摘要"""
+    return _web_search(query)
+
+
+# ---- 工具 15：网页正文读取 ----
+@tool(description="读取指定网页正文内容。入参url为目标链接。当联网搜索只返回摘要、需要了解完整内容时使用")
+def page_read(url: str) -> str:
+    """抓取网页正文纯文本"""
+    return _page_read(url)
+
+
+# ---- 工具 16：图片理解（读图） ----
+@tool(description="理解一张图片并返回文字描述。入参image_ref为图片链接(https://...)或base64(data:image/...)。当用户发送菜单/菜品/单据截图询问内容时使用")
+def describe_image(image_ref: str) -> str:
+    """用视觉模型描述图片内容"""
+    return _describe_image(image_ref)
+
+
+# ---- 工具 17：上传文件解析（txt / pdf） ----
+@tool(description="读取用户上传的文件内容。入参ref为文件链接或[文件:链接|文件名]标记。当用户消息含\"[文件:\"标记（如\"[文件:http://...|订单.txt]\"），或用户上传了 txt/pdf 文件询问其内容/总结/分析时使用")
+def read_file(ref: str) -> str:
+    """解析上传的 txt/pdf 文件，返回纯文本内容"""
+    return _read_file(ref)
+
+
+# ---- 工具 18：FAQ 精确问答（苍穹外卖） ----
+@tool(description="从苍穹外卖常见问题库中精确查找答案。入参question为用户问题。当用户咨询下单/支付/配送/退款/会员/账号等高频业务问题时，优先调用此工具（比知识库检索更快更准）")
+def faq_lookup(question: str) -> str:
+    """精确命中 FAQ，返回 Q&A；未命中返回空串"""
+    return _faq_lookup(question)
+
+
+# ---- 工具 18：安全代码沙箱 ----
+@tool(description="在受限沙箱中执行一段Python代码并返回输出（入参code为Python源码）。适合需要精确计算/批量处理/画数据规律时使用。注意：沙箱禁用os/subprocess/socket等系统能力，仅可用math/statistics/json等安全库")
+def run_python(code: str) -> str:
+    """在受限子进程执行 Python，返回 stdout"""
+    return _run_code(code)

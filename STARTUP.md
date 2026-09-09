@@ -104,7 +104,12 @@ curl -X POST http://localhost:8000/chat ^
 
 ### 第 2 步：启动 Spring Boot 后端
 
-#### 方式 A：spring-boot:run（推荐，更快）
+> ⚠️ 注意：本项目的父 POM（sky-take-out）打包类型为 `pom`，没有 mainClass，
+> 因此 `spring-boot:run` 无法直接使用。需先编译打包，再运行 JAR。
+
+#### 方式 A（推荐）：编译打包 → 启动 JAR
+
+**第①步 — 编译打包（仅首次或修改代码后需要）：**
 
 ```bash
 cd C:\Users\26716\PycharmProjects\LangChain-ReAct-Agent\sky-take-out
@@ -112,21 +117,21 @@ cd C:\Users\26716\PycharmProjects\LangChain-ReAct-Agent\sky-take-out
 :: 使用 JDK 8
 set JAVA_HOME=C:\Users\26716\.jdks\corretto-1.8.0_492
 
-:: 编译并启动（不打包 JAR，省 ~30s）
-C:\Users\26716\.m2\wrapper\dists\apache-maven-3.9.15-bin\4rlcemksed9vjmkvgss0jpc4po\apache-maven-3.9.15\bin\mvn.cmd spring-boot:run -pl sky-server -am
+:: 编译 sky-server 及其依赖模块（sky-common, sky-pojo），跳过测试
+C:\Users\26716\.m2\wrapper\dists\apache-maven-3.9.15-bin\4rlcemksed9vjmkvgss0jpc4po\apache-maven-3.9.15\bin\mvn.cmd clean install -DskipTests -pl sky-server -am
 ```
 
-#### 方式 B：打包运行（传统方式）
+**第②步 — 启动 JAR：**
 
 ```bash
-cd C:\Users\26716\PycharmProjects\LangChain-ReAct-Agent\sky-take-out
-
-:: 先编译打包
-C:\Users\26716\.m2\wrapper\dists\apache-maven-3.9.15-bin\4rlcemksed9vjmkvgss0jpc4po\apache-maven-3.9.15\bin\mvn.cmd clean install -DskipTests
-
-:: 再启动 JAR
 C:\Users\26716\.jdks\corretto-1.8.0_492\bin\java.exe -jar sky-server\target\sky-server-1.0-SNAPSHOT.jar --spring.profiles.active=dev
 ```
+
+#### 方式 B（开发热重启）：在 IntelliJ IDEA 中直接运行
+
+1. 打开 `sky-server/src/main/java/com/sky/SkyApplication.java`
+2. 右键 → Run `SkyApplication.main()`
+3. 如需热重启，在 `pom.xml` 中添加 `spring-boot-devtools` 依赖
 
 Spring Boot 将在 `http://localhost:8080` 监听。
 
@@ -257,10 +262,14 @@ echo [1/3] 启动 Python Agent...
 start "Agent" cmd /c "%PROJECT_DIR%\.venv\Scripts\uvicorn api_service:app --host 0.0.0.0 --port 8000"
 timeout /t 8 /nobreak >nul
 
-:: 2. 启动 Spring Boot
-echo [2/3] 启动 Spring Boot 后端...
-start "SpringBoot" cmd /c "cd /d %PROJECT_DIR%\sky-take-out && %M2_HOME%\bin\mvn.cmd spring-boot:run -pl sky-server -am"
-timeout /t 30 /nobreak >nul
+:: 2. 先编译 Spring Boot，再启动 JAR
+echo [2/3] 编译 Spring Boot 后端...
+start "MavenBuild" cmd /c "cd /d %PROJECT_DIR%\sky-take-out && %M2_HOME%\bin\mvn.cmd clean install -DskipTests -pl sky-server -am"
+timeout /t 50 /nobreak >nul
+
+echo [2/3] 启动 Spring Boot JAR...
+start "SpringBoot" cmd /c "%JAVA_HOME%\bin\java.exe -jar %PROJECT_DIR%\sky-take-out\sky-server\target\sky-server-1.0-SNAPSHOT.jar --spring.profiles.active=dev"
+timeout /t 15 /nobreak >nul
 
 :: 3. 启动 Vue 前端
 echo [3/3] 启动 Vue 前端...
@@ -274,6 +283,9 @@ echo  前端:      http://localhost:8888
 echo ========================================
 pause
 ```
+
+> **注意**：`start-all.bat` 中的 Maven 编译步骤仅首次或代码变更后需要。
+> 后续只需运行第②步的 `java -jar` 命令即可快速启动后端。
 
 ---
 
