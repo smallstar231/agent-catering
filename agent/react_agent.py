@@ -2,6 +2,25 @@
 # 功能：创建 ReAct Agent 并提供流式执行接口
 # 被 app.py 调用，是整个项目的"大脑中枢"
 # 这个文件把模型、工具、中间件、提示词组装在一起，形成完整的 Agent
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：引擎层（全项目的"大脑"，向下用服务层能力，向上被 API 调用） │
+# │ 上游：model.factory(LLM)、prompt_loader(提示词)、config_handler(scene)│
+# │       工具按场景组装：sky 15 个 / robot 8 个、middleware(3)        │
+# │ 下游：api_service（/chat/stream 调 execute_stream_events）           │
+# │ 两个阶段：                                                         │
+# │   __init__   组装：scene→提示词 + 工具列表 + create_agent()          │
+# │   execute_stream_events  执行：清洗历史→压缩→注入日期→流式跑 Agent  │
+# │ 产出三类事件（yield 二元组）：                                      │
+# │   ("text", 片段)      正文 token（打字机）                          │
+# │   ("tool", {...})    工具调用事件（前端"正在调用 XX"气泡）           │
+# │   ("reasoning", str) 思考链片段（思考模型才有）                     │
+# │ 关键设计：                                                        │
+# │   · runtime.context 是"一次执行的共享记事本"（report/tool_events/    │
+# │     rag_images 都放这里，中间件与主循环通过它通信）                  │
+# │   · 每轮注入真实日期 system 消息（LLM 无时钟，会猜错年份）           │
+# │   · RAG 命中图"后端保证回显"（流结束补发，不依赖模型转发）           │
+# └────────────────────────────────────────────────────────────────────┘
 
 from langchain.agents import create_agent  # LangChain 的 Agent 创建函数
 from model.factory import chat_model       # LLM 对话模型（通义千问）
@@ -47,12 +66,29 @@ class ReactAgent:
         else:
             base_prompt = load_system_prompts()
 
-        # 基础工具列表：rag / 当前年月(真实) / 报表触发 + 6 苍穹外卖工具 + 增强工具 + 只读 DB 查询
-        tools = [rag_summarize, get_current_month, fill_context_for_report,
-                 sky_rag_summarize, sky_query_dish, sky_query_category,
-                 sky_query_setmeal, sky_query_order, sky_generate_report,
-                 web_search, page_read, describe_image, read_file, faq_lookup, run_python,
-                 db_query]
+        # ---- 按场景组装工具列表（scene 隔离）----
+        # 背景：工具必须与实际连接的知识库/数据源匹配。
+        #   · rag_summarize 连的是 robot 库（chroma_db），在 sky 场景下检索不到外卖资料；
+        #   · sky_* / faq_lookup / db_query 依赖苍穹外卖后端或外卖业务库，robot 场景下必然失败。
+        # 早期实现是"一次性列出全部工具"，靠提示词引导模型选对的 —— 这层隔离交给了模型，
+        # 代码层没有保证（模型仍可能选错，白跑一次检索/API）。现改为按 scene 静态组装。
+
+        # 通用工具（两个场景共用）：真实日期 / 报表信号 / 联网 / 网页 / 读图 / 读文件 / 计算沙箱
+        common_tools = [get_current_month, fill_context_for_report,
+                        web_search, page_read, describe_image, read_file, run_python]
+
+        if self.scene == "sky":
+            # 苍穹外卖场景：外卖知识库 RAG + 业务查询/报表工具 + FAQ 精确问答 + 只读 DB 查询
+            scene_tools = [sky_rag_summarize, sky_query_dish, sky_query_category,
+                           sky_query_setmeal, sky_query_order, sky_generate_report,
+                           faq_lookup, db_query]
+        else:
+            # 机器人场景：仅 robot 知识库 RAG（苍穹外卖的查询/报表/FAQ/DB 对本场景无意义）
+            scene_tools = [rag_summarize]
+
+        tools = common_tools + scene_tools
+        logger.info(f"[ReactAgent]场景 {self.scene} 注册 {len(tools)} 个工具："
+                    f"{[t.name for t in tools]}")
 
         # 可选：挂载外部 MCP 工具（config/agent.yml -> enable_mcp_tools）
         # 默认关闭，避免每次启动额外拉起 MCP server 拖慢；需要时置 true 并在 config 配好
