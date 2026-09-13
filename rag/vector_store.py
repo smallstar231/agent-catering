@@ -2,6 +2,19 @@
 # 功能：管理 Chroma 向量库——初始化、文档加载、分片、存储、检索
 # 被 rag/rag_service.py 调用（获取检索器）
 # 被首次运行时的知识库初始化脚本调用（加载文档）
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层（文本 RAG 的底座）                                  │
+# │ 上游：chroma_conf（集合名/路径/k/chunk 参数）、model.factory(embed)、 │
+# │       file_handler（PDF/TXT 加载器、MD5、目录扫描）                  │
+# │ 下游：rag_service（要检索器）、ai_admin（读切片数）、入库脚本         │
+# │ 核心概念：                                                        │
+# │   · 场景隔离：sky→agent_sky集合 / robot→agent集合                   │
+# │   · MD5 去重：已入库文件跳过（记录在 md5.txt / md5_sky.txt）         │
+# │   · 分片(chunk)：长文档切 200 字/重叠 20 字，便于精准检索            │
+# │ 加载来源：data/ 根目录（按场景前缀过滤）+ data/kb/<scene>/（页面上传）│
+# │ 注意：扫描"不递归子目录"——只扫 data/kb/<scene>/ 根层的文件           │
+# └────────────────────────────────────────────────────────────────────┘
 
 from langchain_chroma import Chroma                           # LangChain 的 Chroma 向量库封装
 from langchain_core.documents import Document                 # 文档对象（page_content + metadata）

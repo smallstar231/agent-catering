@@ -8,6 +8,23 @@
 #   图片字节 → 落盘 data/uploads 得 /files URL(供展示) → 调 caption(视觉模型,≤300字)
 #            → embed_media(caption, image data-url) 融合向量 → 写入多模态集合
 #   caption 失败给空串兜底（仍能向量化，只是检索锚点弱）；单图失败不影响其它。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层的"入库脚本"（可手动运行，也被 ai_admin 上传入库调用）│
+# │ 上游：multimodal_store（写入）、multimodal_embedding（算向量）、      │
+# │       pdf_image_extractor（抽 PDF 图）、vision._caption（生成 caption）│
+# │ 下游：无（终端脚本/被 API 调用）                                    │
+# │ 两个入口函数：                                                    │
+# │   ingest_independent_images  独立图片（data/ 或 data/kb/<scene>/）   │
+# │   ingest_pdf_images          含图 PDF 的内嵌图                      │
+# │ 运行方式：python -m rag.multimodal_ingest --scene sky [--rebuild]   │
+# │ 关键设计：                                                       │
+# │   · 每张图锚点文本 = caption（视觉模型描述）+ PDF页正文（如有）      │
+# │   · md5 去重记录在 md5_mm.txt / md5_sky_mm.txt                     │
+# │   · --rebuild 会清空集合 + 清 md5 后重扫                            │
+# │   · 单图失败不影响其它（逐张 try）                                  │
+# └────────────────────────────────────────────────────────────────────┘
+
 
 import os
 import sys

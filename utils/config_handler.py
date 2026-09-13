@@ -2,6 +2,17 @@
 # 功能：读取 config/ 目录下的所有 YAML 配置文件，解析为 Python 字典
 # 被 model/factory.py、rag/vector_store.py、agent/tools/agent_tools.py、utils/prompt_loader.py 等调用
 # 核心设计：模块级变量（rag_conf 等）在 import 时一次性加载，全局共享，不会重复读文件
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：地基层（最底层，被几乎所有模块依赖）                       │
+# │ 上游：无（它只依赖 .env 与 config/*.yml 文件）                       │
+# │ 下游：model/factory（读模型名）、rag/vector_store（读集合/路径）、    │
+# │       agent_tools（读 faq_path 等）、prompt_loader（读提示词路径）、  │
+# │       ai_admin（改配置时同步更新本模块的内存字典）                    │
+# │ 关键概念：import 时求值 → 模块级变量即"全局单例"，读一次到处复用      │
+# │ 注意点：ai_admin 改配置时会同步改这里的 *_conf 内存对象，            │
+# │         但模型实例（factory）仍持旧值 → 切模型需重启                 │
+# └────────────────────────────────────────────────────────────────────┘
 
 import yaml
 from dotenv import load_dotenv  # 从 .env 加载环境变量（DASHSCOPE_API_KEY / TAVILY_API_KEY 等）

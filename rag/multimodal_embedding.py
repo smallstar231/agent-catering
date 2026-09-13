@@ -3,6 +3,19 @@
 # 被 rag/multimodal_store.py 调用，用于图文知识库的入库(embed_media)与文字查询(embed_query)。
 # 端点/参数参考 PAI-RAG--STUDY backend/rag/embedding/multimodal_dashscope_embedding.py，但本项目用同步 httpx。
 # 设计：惰性读取 DASHSCOPE_API_KEY；纯文本→type=vl；图+文本(enable_fusion)→type=fusion；均 2560 维，可跨模态检索。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层（多模态 RAG 的底座，对应文本 RAG 的 embed_model）    │
+# │ 上游：rag_conf.multimodal.model（模型名）、.env（DASHSCOPE_API_KEY）  │
+# │ 下游：multimodal_store（入库 embed_media / 检索 embed_query）        │
+# │ 核心概念："同一语义空间"——图和文都映射成 2560 维向量，故"以文搜图"可行│
+# │   两种输入：                                                      │
+# │     embed_query(text)          → type=vl（纯文本向量，查询用）      │
+# │     embed_media(text, image)   → type=fusion（图+文融合，入库用）    │
+# │ 独特点：这是"原生 httpx 直连 DashScope 专用端点"，不走 LangChain 封装 │
+# │   （因为多模态向量端点 LangChain 没有现成封装）                       │
+# │ 错误处理：任何失败抛 MultimodalEmbeddingError，由调用方决定降级       │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import sys

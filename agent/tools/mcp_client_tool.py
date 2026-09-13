@@ -7,6 +7,22 @@
 #   - 默认 stdio 模式启动本仓库的 mcp_server.py（见 config/agent.yml 的 mcp_server 段）；
 #   - 也可配置成远程 SSE 地址，连接任意 MCP 服务商工具。
 #   - 连接失败/未配置时返回 []，不影响主 Agent 启动。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：引擎层的工具（"外接工具适配器"）                          │
+# │ 上游：config/agent.yml 的 mcp_server 段、mcp_server.py（本仓库服务） │
+# │ 下游：react_agent.__init__（enable_mcp_tools=true 时扩展工具列表）  │
+# │ 核心概念：MCP = Model Context Protocol（模型上下文协议）            │
+# │   → 一种"标准化工具接口"，让 Agent 能接第三方提供的工具（不限于本项目）│
+# │ 两种接入模式：                                                     │
+# │   stdio：本地进程（python -m mcp_server）                          │
+# │   SSE  ：远程服务（http://host:port/mcp）                          │
+# │ 关键设计：★ 异步↔同步桥接 ★                                        │
+# │   · MCP SDK 是 async 的，而 LangChain 工具调用是同步的             │
+# │   · 用 asyncio.run 包一层（每次工具调用建一次连接，简单但非最优）    │
+# │ 容错：连接失败/依赖缺失 → 返回 []（不阻断主 Agent 启动）             │
+# │ 说明：本仓库 mcp_server.py 暴露 faq/kb/web_search 三个工具做演示    │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 from utils.logger_handler import logger

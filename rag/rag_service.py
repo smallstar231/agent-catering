@@ -2,6 +2,20 @@
 # 功能：接收用户提问 → 从向量库检索相关文档 → 拼接参考资料 → 交给 LLM 总结 → 返回总结文本
 # 被 agent/tools/agent_tools.py 的 rag_summarize 工具调用
 # RAG = Retrieval Augmented Generation（检索增强生成）
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层的"门面"——把 检索+精排+总结 封装成一个方法          │
+# │ 上游：vector_store（文本库）、multimodal_store（图文库）、rerank、    │
+# │       model.factory（LLM）、prompt_loader（RAG 提示词）              │
+# │ 下游：agent_tools 的 rag_summarize / sky_rag_summarize 工具          │
+# │ 核心方法：rag_summarize(query) —— 外部只需调这一个                   │
+# │ 流程：文本召回→rerank→topK ┐                                        │
+# │       图文召回→三段式过滤 ┘→ 拼接(带来源) → LLM 总结 → 附来源/图片   │
+# │ 关键设计：                                                        │
+# │   · 双路召回（文本 + 图文）合并，图文占固定槽位(mm_echo_limit)       │
+# │   · RAG 层本身"不带对话历史"——每次独立检索（记忆在 Agent 多轮层）    │
+# │   · 命中图由本层输出 [图片:url]，中间件抽取后流末尾回显              │
+# └────────────────────────────────────────────────────────────────────┘
 
 from langchain_core.documents import Document       # 文档对象
 from langchain_core.output_parsers import StrOutputParser  # 输出解析器：将 LLM 输出转为纯字符串

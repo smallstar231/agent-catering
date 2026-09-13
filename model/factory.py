@@ -2,6 +2,18 @@
 # 功能：初始化 LLM（对话模型）和 Embedding（向量化模型），供 Agent 和 RAG 使用
 # 被 agent/react_agent.py（LLM）、rag/vector_store.py（Embedding）、rag/rag_service.py（LLM）调用
 # 设计模式：工厂模式——通过工厂类统一创建模型对象，解耦模型的创建和使用
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层（紧邻地基层，为引擎层/服务层提供模型能力）           │
+# │ 上游：config_handler（读 rag_conf 的模型名）、.env（读 API KEY）      │
+# │ 下游：react_agent（chat_model）、rag_service（chat_model）、          │
+# │       vector_store（embed_model）、ai_admin（读模型名展示）           │
+# │ 关键概念：模块级单例 —— chat_model/embed_model 在 import 时创建一次   │
+# │ 重要影响：★ 模型实例"固化"在 import 时刻 ★                           │
+# │   → AI 管理页改了模型名，只改到 rag_conf 与 yml，本文件的实例仍是旧的  │
+# │   → 所以"切换模型必须重启 Agent 服务"（已知且符合预期的取舍）        │
+# │ 为何用工厂：统一创建逻辑；未来加"多模态向量/视觉模型"工厂时便于扩展   │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 from abc import ABC, abstractmethod  # 抽象基类：定义接口规范

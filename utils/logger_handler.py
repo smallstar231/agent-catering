@@ -2,6 +2,16 @@
 # 功能：提供统一的日志记录能力，同时输出到控制台和文件
 # 被几乎所有模块调用（config_handler、prompt_loader、file_handler、vector_store、agent_tools、middleware 等）
 # 核心设计：控制台只显示 INFO 及以上级别，文件记录 DEBUG 及以上级别（更详细）
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：地基层                                                    │
+# │ 上游：path_tool（定位 logs/ 目录）                                  │
+# │ 下游：全项目（各模块 `from utils.logger_handler import logger`）     │
+# │ 关键概念：双 Handler —— 控制台(INFO+)看关键信息，文件(DEBUG+)存全量  │
+# │ 设计要点：get_logger 内 `if logger.handlers: return` 防重复添加      │
+# │   → 同一日志器被多次 import 时不会重复输出/重复写文件                │
+# │ 排查提示：运行日志在 logs/agent_YYYYMMDD.log（按天分文件）           │
+# └────────────────────────────────────────────────────────────────────┘
 
 import logging
 from utils.path_tool import get_abs_path  # 路径工具

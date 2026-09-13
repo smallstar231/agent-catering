@@ -3,6 +3,23 @@
 # 被 agent/react_agent.py 注册为工具，供用户上传菜单/菜品截图等场景使用
 # 模型：qwen-vl-plus（DashScope 兼容 OpenAI 接口，与主模型同 key）
 # 设计：惰性创建视觉 ChatModel，避免 import 时即构造（且未配置 key 不抛错）
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：引擎层的工具（"Agent 的眼睛"）                            │
+# │ 上游：rag_conf.vision_model_name（模型名）、.env（DASHSCOPE_API_KEY）│
+# │ 下游：react_agent 注册为 describe_image 工具；                    │
+# │       multimodal_ingest 复用 _get_client/_local_file_to_data_url 生 caption│
+# │ 核心难点（本文件精华）：                                            │
+# │   · 视觉模型在云端，**下载不了 http://localhost 的图片** → 必须把   │
+# │     本服务 /files/xxx 读成本地文件转 data-url(base64)               │
+# │   · 图片体积上限 5MB（超了 DashScope 会 422）                       │
+# │   · URL 预检 _looks_like_image_url：避免把 .txt/.html 发去报 400    │
+# │ 三个关键私有函数（被 multimodal_ingest 复用，故用下划线但非真私有）： │
+# │   _get_client()              惰性创建视觉 ChatModel                │
+# │   _local_file_to_data_url()  本地图 → base64 data-url              │
+# │   MAX_IMAGE_BYTES            5MB 上限常量                          │
+# │ 失败一律返回"【读图失败】..."文本，绝不抛异常给 Agent                │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import re

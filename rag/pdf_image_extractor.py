@@ -6,6 +6,22 @@
 # 输出：对每张图返回
 #   {img_url(落盘后 /files URL), data_url(喂 embedding), mime, page_text(所属页文本), page_no}
 # 图落盘到 data/uploads（该目录已被 api_service mount /files 静态托管）。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层的"工具函数"（被 multimodal_ingest 调用）            │
+# │ 上游：PyMuPDF(pymupdf) 库、path_tool                             │
+# │ 下游：multimodal_ingest.ingest_pdf_images                         │
+# │ 核心概念：PDF 内嵌图 ≠ PDF 全文——本文件只抽"图"，但会把图片所在页的  │
+# │   正文一并取出(page_text)，作为这张图的"检索上下文锚点"（因为图本身  │
+# │   没文字，靠 caption + 页正文才能被语义检索命中）                    │
+# │ 关键 API（PyMuPDF 1.28 有变化）：                                  │
+# │   · page.get_text()           抽该页文本                          │
+# │   · page.get_images(full=True) 列该页图片引用(xref)               │
+# │   · doc.extract_image(xref)   取图字节 ★ 1.28 起在 doc 级，非 page 级 │
+# │ 输出 5 字段：img_url / img_name / data_url / page_text / page_no   │
+# │ 限制：每 PDF 最多 20 张（MAX_IMAGES_PER_PDF），页文本截 1500 字      │
+# │ 失败返回空列表（绝不抛给上层）                                      │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import sys

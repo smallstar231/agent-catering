@@ -6,6 +6,20 @@
 #
 # 注意：本集合内所有向量必须同维(2560)。集合由本类首建，无默认 embedding 函数；
 # 检索用"文字 query 向量"去命中"图文/图融合向量"——同一语义空间，实现以文搜图。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：服务层（多模态 RAG 的向量库，对应文本侧的 vector_store）    │
+# │ 上游：multimodal_embedding（产生向量）、chroma_conf（集合名/路径）    │
+# │ 下游：multimodal_ingest（入库 add_entry）、rag_service（检索 query_text）│
+# │ 与文本库的关键差异：                                              │
+# │   · 文本库用 langchain_chroma.Chroma（自动 embedding）             │
+# │   · 本文件用"原生 chromadb"（因为我们自己算向量，要直插直查）        │
+# │   · 集合名 agent_mm / agent_sky_mm，独立目录 chroma_db_mm 等        │
+# │ 两个核心方法：                                                    │
+# │   add_entry(...)     入库一条图文（图向量 + 锚点文本 + 展示URL）     │
+# │   query_text(text)   以文搜图（返回 [(Document, distance), ...]）    │
+# │ 维度陷阱：集合首条向量定维(2560)，换模型(如 qwen2.5-vl)须 --rebuild  │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import sys

@@ -2,6 +2,22 @@
 # 功能：在 Agent 执行过程中插入自定义逻辑——工具监控、模型调用日志、动态提示词切换
 # 被 agent/react_agent.py 导入，注册到 ReAct Agent 中
 # 中间件 = 在"请求→处理→响应"的流程中插入额外逻辑（类似拦截器/钩子）
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：引擎层（Agent 的"流程钩子"，挂在 create_agent 上）          │
+# │ 上游：langchain.agents.middleware 装饰器、prompt_loader、config      │
+# │ 下游：被 react_agent 注册；产出的 tool_events/rag_images 被主循环消费 │
+# │ 三个中间件（装饰器决定插入时机）：                                   │
+# │   monitor_tool  @wrap_tool_call   包在每次工具调用外 → 记日志/事件   │
+# │   log_before_model @before_model  每次调 LLM 前 → 记日志             │
+# │   report_prompt_switch @dynamic_prompt 生成提示词时 → 按场景/报表切换 │
+# │ 与主循环的通信：全靠 request.runtime.context（同一 dict 引用）        │
+# │   · 写 context["tool_events"]   → 主循环取出发"工具气泡"             │
+# │   · 写 context["report"]=True   → report_prompt_switch 读到后切提示词 │
+# │   · 写 context["rag_images"]    → 主循环流末尾补发"[图片:url]"        │
+# │ 已知小瑕疵：提示词选择逻辑在 react_agent.__init__ 与本文件各有一份，   │
+# │   当前两端都按 agent_conf["scene"] 判定一致，但属"双源头"隐患         │
+# └────────────────────────────────────────────────────────────────────┘
 
 from typing import Callable  # 类型标注：可调用对象（函数）
 from utils.prompt_loader import (load_system_prompts, load_report_prompts,
