@@ -51,6 +51,54 @@ _CONFIG_SOURCES = {
 }
 
 
+# ---- "改后需重启 Agent 才生效"的配置清单 ----
+# 判断规则：该配置是"对象构造时读一次"（→ 需重启），还是"每次使用时现读"（→ 即时生效）？
+#
+# 【需重启】rag.yml
+#   · chat_model_name / embedding_model_name → model/factory.py 第 81/84 行在**模块级**
+#     构造 chat_model / embed_model 单例（import 时固化）。
+#   · multimodal.*（整段）→ RagSummarizeService.__init__ 一次性读进 self.mm_*；
+#     而 rag / rag_sky 是 agent_tools.py 的**模块级**实例。（同理含 multimodal.model，
+#     它经 MultimodalVectorStore.__init__ 的 _mm_model_name() 读入。）
+#   · vision_model_name → 归入此列是**保守**选择：vision._get_client() 是惰性单例，
+#     若"尚未调用过读图"则改后首次调用即生效；但"已调用过"就固化了。无法判断 → 按需重启提示。
+#
+# 【需重启】chroma.yml
+#   · k / recall_k → rag_service.__init__ 读入 self.final_k / self.recall_k
+#     （final_k 决定最终喂给 LLM 的总槽位数；recall_k 是向量召回候选数）
+#   · 集合名 / 持久化目录 → VectorStoreService.__init__（第 47-51 行）
+#   · chunk_size / chunk_overlap / separators → VectorStoreService.__init__（第 71-73 行）
+#
+# 【不需重启】（刻意不列入，改内存即生效）
+#   · conv.* 全部 → history_compressor 每次调用现读 conv_conf
+#   · rag.yml 的 rerank.enabled / rerank.model / rerank.fallback_model
+#     → rerank_enabled() 与 rerank_docs() 都是**调用时**现读 rag_conf，无缓存
+#   · chroma.yml 的 data_path / allow_* / md5_hex_store* → 仅入库时读
+_RESTART_RAG_EXACT = {"chat_model_name", "embedding_model_name", "vision_model_name"}
+_RESTART_RAG_PREFIX = ("multimodal.",)   # 该段整体在 __init__ 读一次
+_RESTART_CHROMA = {
+    "k", "recall_k",
+    "collection_name", "collection_name_sky",
+    "collection_name_mm", "collection_name_mm_sky",
+    "persist_directory", "persist_directory_sky",
+    "persist_directory_mm", "persist_directory_mm_sky",
+    "chunk_size", "chunk_overlap", "separators",
+}
+
+
+def _config_needs_restart(items) -> bool:
+    """判断一组配置改动是否需要重启 Agent。任一改动项落在"构造时读取"清单内 → True。"""
+    for it in items:
+        if it.file == "rag" and (
+            it.path in _RESTART_RAG_EXACT or it.path.startswith(_RESTART_RAG_PREFIX)
+        ):
+            return True
+        if it.file == "chroma" and it.path in _RESTART_CHROMA:
+            return True
+    return False
+
+
+
 def _read_yml(rel: str) -> dict:
     with open(get_abs_path(rel), "r", encoding="utf-8") as f:
         return yaml.load(f, Loader=yaml.FullLoader) or {}
@@ -107,7 +155,16 @@ def get_ai_config():
         "rerank": {
             "enabled": bool(_dget(config_handler.rag_conf, "rerank.enabled")),
             "model": _dget(config_handler.rag_conf, "rerank.model"),
-            "top_n": _dget(config_handler.rag_conf, "rerank.top_n"),
+            # ★ top_n 取 **chroma.yml 的 k**，不是 rag.yml 的 rerank.top_n！
+            #   原因：rag_service.py:131 调 rerank_docs(query, recalled, top_n=self.final_k)
+            #   **总是显式传参**，而 self.final_k = chroma.yml 的 k（rag_service.py:57）
+            #   → rerank.py:54 那句 `_cfg("top_n", 3)` 在生产路径**永不执行**。
+            #   故这里展示真实生效值，避免"改 rag.yml.top_n 界面变了却无效"的误导。
+            #   （rag.yml 的 rerank.top_n 仅作 rerank_docs() 未传参时的函数默认值。）
+            "top_n": _dget(config_handler.chroma_conf, "k"),
+            "top_n_source": "chroma.yml:k",
+            "top_n_note": "由 chroma.yml 的 k 决定（rag_service 显式传入）；"
+                          "rag.yml 的 rerank.top_n 仅作 rerank_docs() 的函数默认值，本路径不读取",
             "fallback_model": _dget(config_handler.rag_conf, "rerank.fallback_model"),
         },
         "vision_model": _dget(config_handler.rag_conf, "vision_model_name"),
@@ -233,17 +290,10 @@ def put_ai_config(req: AiConfigUpdate):
             if it.file == f:
                 _dset(mem, it.path, it.value)
 
-    # 判断是否涉及"启动时构造单例"的模型项（这类仍需重启才真正生效）
-    # 注：multimodal.model 同样是"构造实例时读一次"——
-    #     MultimodalVectorStore.__init__ 读 rag.yml 的 multimodal.model，
-    #     而它由 RagSummarizeService 在模块级创建（agent_tools.py 的 rag/rag_sky），
-    #     故改它同样需重启；漏在此集合会导致界面错误提示"已即时生效"。
-    model_paths = {"chat_model_name", "embedding_model_name", "rerank.model",
-                   "rerank.fallback_model", "vision_model_name",
-                   "multimodal.model"}
-    needs_restart = any(it.file == "rag" and it.path in model_paths for it in req.items)
+    needs_restart = _config_needs_restart(req.items)
     msg = ("已保存并即时生效。" if not needs_restart
-           else "已保存并更新内存配置；但模型项由启动时构造的 LLM 单例使用，切换模型需重启 Agent 服务。")
+           else "已保存并更新内存配置；但该项在对象构造时读取（启动时固化的单例），"
+                "需重启 Agent 服务才真正生效。")
     return {"ok": True, "msg": msg, "written": list(per_file.keys())}
 
 

@@ -4,6 +4,12 @@ vision_model_name: qwen-vl-plus
 rerank:
   enabled: true
   model: gte-rerank-v2
+  # ⚠️ 注意：本项**在当前 RAG 路径上不生效**。
+  #   真正决定"精排后取几条"的是 config/chroma.yml 的 k（rag_service.py:131
+  #   总是以 top_n=self.final_k 显式传参，覆盖了这里的值）。
+  #   这里保留，仅作 rerank_docs() 未显式传参时的**函数默认值**
+  #   （如直接调用 rerank_docs(query, docs) 的场景）。
+  #   要改"精排后条数" → 请改 config/chroma.yml 的 k。
   top_n: 3
   fallback_model: qwen3-rerank
 multimodal:
