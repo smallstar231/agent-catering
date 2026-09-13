@@ -1,7 +1,25 @@
 # Agent 工具定义模块
-# 功能：定义 Agent 可以调用的 7 个工具函数
+# 功能：定义 Agent 可调用的"业务工具"（通用 + 苍穹外卖 + 增强工具封装）
 # 被 agent/react_agent.py 导入，注册到 ReAct Agent 中
-# 工具列表：rag_summarize、get_weather、get_user_location、get_user_id、get_current_month、fetch_external_data、fill_context_for_report
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：引擎层（工具集主文件，最大的工具定义文件，~580 行）          │
+# │ 上游：rag_service（RAG工具）、config_handler、path_tool、.env        │
+# │ 下游：react_agent（注册进 Agent）                                   │
+# │ 工具分三类（共 16 个注册，本文件占多数）：                            │
+# │   ① 通用：rag_summarize / get_current_month(真实日期) /              │
+# │           fill_context_for_report(报表触发信号)                     │
+# │   ② 苍穹外卖：sky_rag_summarize + sky_query_dish/category/           │
+# │           setmeal/order + sky_generate_report                       │
+# │   ③ 增强封装：web_search/page_read/describe_image/faq_lookup/        │
+# │           read_file/run_python（薄封装，实体在各独立文件）            │
+# │ ★ 已移除的模拟工具（历史遗留，函数定义仍在但不再注册）：              │
+# │   get_weather / get_user_location / get_user_id / fetch_external_data│
+# │   —— 它们是早期"看 AI 会不会调工具"时造的假数据，会编造信息给用户，    │
+# │      已从 react_agent 的工具列表移除。保留定义仅供参考。             │
+# │ 场景隔离：苍穹外卖工具通过 HTTP 调 Spring(:8080)，需 .env 配         │
+# │   SKY_ADMIN_USERNAME/PASSWORD 才能登录查真实数据                    │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import random                                        # 随机数（用于模拟数据）
@@ -571,7 +589,7 @@ def faq_lookup(question: str) -> str:
 
 
 # ---- 工具 18：安全代码沙箱 ----
-@tool(description="在受限沙箱中执行一段Python代码并返回输出（入参code为Python源码）。适合需要精确计算/批量处理/画数据规律时使用。注意：沙箱禁用os/subprocess/socket等系统能力，仅可用math/statistics/json等安全库")
+@tool(description="在受限沙箱中执行一段Python代码并返回输出（入参code为Python源码）。适合需要精确计算/批量统计/数据规律分析时使用。沙箱为白名单模式：仅可 import math/statistics/json/re/datetime/collections/itertools/functools 等计算类库，仅可调用 print/len/sum/min/max/sorted/round/abs/range/enumerate/zip 等计算类内置函数；不能读文件、不能联网、不能 import os/subprocess 等系统模块。请用 print 输出结果")
 def run_python(code: str) -> str:
     """在受限子进程执行 Python，返回 stdout"""
     return _run_code(code)

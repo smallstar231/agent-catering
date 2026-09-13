@@ -6,10 +6,18 @@
 #   - 核心策略：超预算时从最旧整轮丢弃 → 保护最近 N 轮 + 末条 assistant/当前 user 永不丢 → 极端时截断最旧保留文本。
 # 纯函数、无 IO，可直接单测。
 
+import os
+import sys
+
+# 允许"直接运行"（python utils/history_compressor.py）也能找到项目内包；
+# 惯例同 rag/* 模块。用 python -m utils.history_compressor 时此行亦无副作用。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.config_handler import conv_conf  # 压缩参数配置
 from utils.logger_handler import logger      # 日志记录器
 
 # 压缩参数默认值（从 config/conv.yml 读取，缺省时回退以下常量）
+# 注：compress_history 返回的是**新列表 + 每条消息的浅拷贝**，绝不修改入参 history。
 DEFAULT_CHAR_BUDGET = 8000
 DEFAULT_PROTECTED_ROUNDS = 6
 DEFAULT_ASSISTANT_TRUNCATE = 400
@@ -115,7 +123,11 @@ def compress_history(history: list, budget_chars: int | None = None) -> list:
         if r is not None and r not in protected:
             protected.append(r)
 
-    result = [m for r in protected for m in r]
+    # ★ 浅拷贝每条消息：下面第二步会就地改 result[i]["content"]，
+    #   若直接引用入参里的字典对象，截断会"写回调用方的 history"，
+    #   违反本模块"纯函数、无 IO"的承诺（实测入参 602→408 字符）；
+    #   且会使第 145 行日志里的"压缩前字数"记成已被截断后的值。
+    result = [dict(m) for r in protected for m in r]
 
     # ---- 第二步：若受保护轮仍超预算（极端超长），对受保护范围内最旧 assistant 截断 ----
     # 恒不截断：最后一条 user（当前问题）与末条 assistant 的完整性
@@ -149,22 +161,34 @@ def compress_history(history: list, budget_chars: int | None = None) -> list:
 
 
 if __name__ == '__main__':
-    # 直接运行此文件时，测试压缩逻辑
+    # 直接运行此文件时，测试压缩逻辑（同时作为回归用例）
+    # ★ 用 8 轮（> protected_rounds 默认 6），确保"压缩真会丢轮"；
+    #   旧版自测只有 4 轮 → 一条轮都不丢 → len 不变 → "压缩应减少条数"断言必然失败。
     _h = [
-        {"role": "user", "content": "第1问" + "长" * 300},
-        {"role": "assistant", "content": "第1答" + "长" * 600},
-        {"role": "user", "content": "第2问" + "长" * 300},
-        {"role": "assistant", "content": "第2答" + "长" * 600},
-        {"role": "user", "content": "第3问" + "长" * 300},
-        {"role": "assistant", "content": "第3答" + "长" * 600},
-        {"role": "user", "content": "第4问" + "长" * 300},
-        {"role": "assistant", "content": "第4答" + "长" * 600},
+        m
+        for i in range(1, 9)
+        for m in (
+            {"role": "user", "content": f"第{i}问" + "长" * 300},
+            {"role": "assistant", "content": f"第{i}答" + "长" * 600},
+        )
     ]
-    _out = compress_history(_h, budget_chars=2000)
-    print("压缩前条数:", len(_h), "字符:", total_chars(_h))
+    _budget = 5000
+
+    _snapshot = [dict(m) for m in _h]        # 入参快照，用于回归"不污染调用方"
+    _chars_before = total_chars(_h)          # 必须在调用前算
+
+    _out = compress_history(_h, budget_chars=_budget)
+
+    print("压缩前条数:", len(_h), "字符:", _chars_before)
     print("压缩后条数:", len(_out), "字符:", total_chars(_out))
+    print("调用后入参条数:", len(_h), "字符:", total_chars(_h),
+          "（应与压缩前一致，证明未被就地修改）")
     for m in _out:
         print(" ", m["role"], m["content"][:30], "...")
+
+    assert _h == _snapshot, "★ 入参 history 不应被就地修改（纯函数契约）"
+    assert total_chars(_h) == _chars_before, "★ 入参字符数不应被压缩改变"
     assert len(_out) < len(_h), "压缩应减少条数"
     assert any(m.get("role") == "user" for m in _out), "应保留最后一条 user"
-    print("OK")
+    assert total_chars(_out) <= _budget, "截断后应回到预算内"
+    print("OK（含回归：入参未被污染）")

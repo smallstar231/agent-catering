@@ -2,11 +2,20 @@
 # 功能：构建 Web 聊天界面，连接 ReactAgent，处理用户输入和流式输出
 # 设计参考 DeepSeek Web 端会话管理：自动存档、历史加载、当前会话名展示
 # 运行：`streamlit run app.py`
-# 依赖：agent/react_agent.py（Agent）、utils/file_handler.py（会话存档）
+# 依赖：agent/react_agent.py（Agent）、utils/session_store.py（会话存档）
+#
+# ★ 会话存储统一：本入口与 api_service（Vue 侧）共用 utils/session_store（SQLite）。
+#   改动前本文件用 utils/file_handler（JSON 文件），导致同一项目两套会话存储并存：
+#   数据互不可见、且 JSON 版缺 updated_at 修复（加载历史会刷新时间戳、列表顺序跳动）。
+#   历史 JSON 会话已由 utils/migrate_json_sessions.py 迁入 SQLite。
+#   本入口无登录态 → 固定归属 uid "default"（与 api_service 的 _uid 兜底一致）。
 
 import streamlit as st                  # Streamlit Web 框架
 from agent.react_agent import ReactAgent  # ReAct Agent
-from utils.file_handler import save_session_to_disk, load_saved_sessions, load_session_messages  # 会话存档
+from utils.session_store import save_session_to_disk, load_saved_sessions, get_session_messages  # 会话存档(SQLite)
+
+# 本入口的会话归属用户（Streamlit 无登录态，固定为 default）
+_UID = "default"
 
 # ---- 页面配置 ----
 st.set_page_config(page_title="智扫通 · 智能客服", page_icon="🤖")
@@ -44,10 +53,12 @@ def auto_save_current_session():
     if not st.session_state["messages"]:
         return
 
-    filepath, sid = save_session_to_disk(
+    # 返回 (库路径, session_id)；此处只需 session_id（库路径由 session_store 内部管理）
+    _db_path, sid = save_session_to_disk(
         st.session_state["messages"],
         st.session_state["round_count"],
         session_id=st.session_state.get("current_session_id"),
+        user_id=_UID,
     )
 
     # 新会话首次保存时，记录生成的 session_id
@@ -71,8 +82,8 @@ def load_session(session_data: dict):
     # 先自动保存当前会话
     auto_save_current_session()
 
-    # 读取历史会话的完整消息
-    messages = load_session_messages(session_data["filepath"])
+    # 读取历史会话的完整消息（按 session_id 取，并校验归属用户）
+    messages = get_session_messages(session_data["id"], user_id=_UID)
     if messages is None:
         st.error("无法加载此会话")
         return
@@ -126,7 +137,7 @@ with st.sidebar:
 
     # ---- 历史会话列表（可点击加载）----
     st.markdown("## 📂 历史会话")
-    saved_sessions = load_saved_sessions()
+    saved_sessions = load_saved_sessions(user_id=_UID)
 
     if not saved_sessions:
         st.caption("暂无历史会话记录")

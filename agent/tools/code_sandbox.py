@@ -1,13 +1,22 @@
 # 安全代码沙箱工具
 # 功能：让 Agent 提交一段 Python 代码，在受限子进程中执行并返回 stdout/stderr。
-# 安全设计（本地学习项目够用，非完全隔离）：
+# 安全设计（v3 = 白名单模式；本地学习项目够用，非完全隔离）：
 #   1. 子进程执行：不污染主进程状态，崩溃/死循环不拖垮服务。
 #   2. 超时控制：默认 15s，超时 kill（防死循环）。
-#   3. import 黑名单：禁止 os.system/subprocess/socket/shutil/ctypes 等危险能力（改为受限白名单子集）。
+#   3. ★ AST 白名单预检（v3 核心）：import 的白名单模块、调用的白名单内置函数、
+#      禁止一切 dunder 属性访问、字符串禁止含 "__" —— **白名单之外一律拒绝**。
+#      相比 v2 的黑名单（列举危险项），白名单的"漏项"不再是漏洞。
 #   4. 内置变量净化：在受限命名空间运行，屏蔽 __builtins__ 危险项。
 #   5. 输出截断：stdout/stderr 各截断到 MAX_OUTPUT，防撑爆上下文。
 #   6. 工作目录指向 data/sandbox/（仅此目录可写，模拟受限文件系统）。
-# 说明：Windows 无 resource.setrlimit，故用"子进程+超时+黑名单"而非真正资源限额。
+#
+# 已知能力边界（白名单的代价）：沙箱只面向"纯计算"——可用 math/statistics/json 等
+# 计算类库与常见内置函数；不能读文件、不能联网、不能 import 系统模块。
+# 若代码用到能力之外的东西，会被明确拒绝并说明原因（模型可据此改写）。
+#   7. ⚠️ 已知限制：AST 预检作用在"代码文本"上，可被非常规手法绕过（如把 dunder
+#      藏进字符串再由内建 str.format 解析——v3 已用"字符串禁含 __"堵住）。
+#      **不可用于"不可信代码"场景**，仅限本地学习/演示。
+# 说明：Windows 无 resource.setrlimit，故用"子进程+超时+AST 白名单预检"而非真正资源限额。
 #       若要更强隔离（进程级内存/CPU 限额），可后续改用 Docker 沙箱（本文件留接口 run_in_docker 位）。
 
 import subprocess
@@ -21,47 +30,32 @@ MAX_OUTPUT = 2000          # 单端输出最大字符
 TIMEOUT_SECONDS = 15       # 执行超时
 _SANDBOX_DIR = "data/sandbox"  # 仅此目录可写
 
-# 危险/禁用的顶层 import 名（防止代码拿到 shell / 网络 / 文件删除能力）
-# 注意：不要把 sys 放进黑名单 —— json/re/random/statistics/collections/functools
-#       等"纯 Python 标准库模块"内部都 import sys，拦 sys 会导致这些库一加载就崩
-#       （而 C 扩展如 math/datetime 不依赖 sys 所以正常，行为不一致）。sys 本身
-#       不构成逃逸（逃逸靠拿到 os/open/模块对象），真正要拦的是下面的系统/网络/文件类。
-_FORBIDDEN_IMPORTS = [
-    "os", "subprocess", "socket", "shutil", "ctypes", "pickle",
-    "importlib", "multiprocessing", "threading", "signal",
-    "webbrowser", "pty", "fcntl", "winreg", "http", "urllib",
-    "requests", "httpx", "sqlite3", "pathlib",
-]
-# 这些模块的某些成员也危险，但我们主要拦顶层 import；完整加固需更复杂 AST，本演示从简。
-
-# 沙箱预置代码：注入受限 builtins + 常用安全库（math/statistics/json 等）
-_SANDBOX_PRELUDE = textwrap.dedent('''
-# --- 沙箱受限环境（自动注入） ---
-import math, statistics, json, random, re, datetime, collections, itertools, functools
-# 屏蔽能逃逸的子进程/文件系统能力（在 __builtins__ 层面兜底）
-_safe_builtins = dict(__builtins__) if isinstance(__builtins__, dict) else __builtins__.__dict__.copy()
-for _bad in ('__import__', 'open', 'input', 'exec', 'eval', 'compile', 'globals', 'locals', 'vars', '__loader__', '__spec__'):
-    _safe_builtins.pop(_bad, None)
-_safe_builtins['print'] = print
-import builtins as _b
-_b.__dict__.update({k: v for k, v in _safe_builtins.items()})
-''')
-
+# ---- v3 白名单（只允许"纯计算"能力；白名单之外一律拒绝）----
+# 允许 import 的模块：均为"不触达系统/网络/文件"的计算类库
+# 注意：这些库内部可能 import os/sys（如 json/random 依赖 os），但那是"库自身加载"
+#       的行为，与"用户代码能否 import os"无关 —— 用户代码里的 `import os` 仍被下面的
+#       AST 白名单拦住。所以此处无需（也不该）考虑它们的内部依赖。
+_ALLOWED_IMPORTS = {
+    "math", "statistics", "json", "random", "re", "datetime",
+    "collections", "itertools", "functools", "decimal", "fractions",
+    "string", "textwrap", "heapq", "bisect", "operator",
+}
 
 def _build_code(user_code: str) -> str:
-    """把用户代码包进受限 guard（import 门卫 + builtin 清理），再交给子进程 exec。
+    """把用户代码包进受限 guard（builtin 清理），再交给子进程 exec。
 
-    设计（v2，替代旧的"删 exec/memoryview"方案）：
-      - 旧方案删 builtin exec/memoryview，导致 importlib 无法加载"纯 Python 模块"
-        （json/re/datetime 等全崩，只剩 C 扩展 math 可用），且不删 exec 又怕逃逸。
-      - 新方案**不再删 exec/compile/memoryview**（importlib 必需），改为两层防护：
-        ① 静态 AST 预检：在代码真正执行前扫 AST，若用户代码里出现危险调用
-           (open/eval/exec/compile/__import__/breakpoint/input/globals/locals/
-           vars/exit/quit 等) 或危险 import → 直接拒绝，不进入执行。
-        ② 运行时 import 门卫：仍替换 __import__，拦顶层危险模块(os/subprocess/
-           socket/网络/DB/文件系统)作为纵深。
-      - 效果：纯 Python 模块(json/re/datetime/random/math...)可正常 import 做计算；
-        但用户代码文本里根本写不出 open/eval/exec，也 import 不进 os/网络。
+    设计演进：
+      - v1（已废弃）：删 builtin exec/memoryview 防逃逸 → 但 importlib 依赖它们，
+        导致"纯 Python 模块"（json/re/datetime）全崩，只剩 C 扩展 math 可用。
+      - v2：不再删 exec/compile/memoryview（importlib 必需），改用**黑名单** AST 预检
+        （列举危险调用 / import / dunder）→ 但黑名单必然有漏项：
+        实测 `().__getattribute__('__class__')` 可绕过并读到任意文件（含 .env）。
+      - v3（当前）：AST 预检改成**白名单** —— 只允许 _ALLOWED_IMPORTS 的模块、
+        _ALLOWED_CALL_NAMES 的内置函数；属性访问**禁止一切 dunder**；字符串禁止含 "__"。
+        白名单之外一律拒绝，故"漏项"不再构成漏洞。
+      - 子进程隔离仍是纵深：即使标准库在沙箱内加载了 os，用户代码也拿不到 os 这个名字
+        （AST 禁 import os），也走不通 dunder 逃逸链（AST 禁 dunder）。
+      - 刻意保留 exec/compile/memoryview 供 importlib 使用（不删，避免重蹈 v1 覆辙）。
     """
     # ① 静态 AST 预检：扫描用户代码，发现危险即抛
     _check_ast_safety(user_code)
@@ -83,27 +77,42 @@ def _build_code(user_code: str) -> str:
     return guard + "\n" + user_code
 
 
-# AST 预检：禁止出现在"用户代码"里的危险内置调用 / 危险字面量
-_DANGEROUS_CALL_NAMES = {
-    "open", "eval", "exec", "compile", "__import__", "breakpoint", "input",
-    "globals", "locals", "vars", "exit", "quit", "memoryview",  # memoryview 仅禁用户直接调(库内部不受此 AST 约束)
-    "getattr",  # 谨慎：getattr 常被逃逸链用作 obj.__class__ 探路
+# ---- 允许"直接名字调用"的内置函数（白名单；不在表内一律拒绝）----
+# 只收"纯计算/数据处理"所需；刻意**不含** open/eval/exec/compile/__import__/getattr/
+# vars/globals/locals/input/breakpoint/exit/quit 等能触达系统、或可用于逃逸探路的函数。
+_ALLOWED_CALL_NAMES = {
+    # 输出
+    "print",
+    # 序列 / 聚合
+    "len", "range", "sum", "min", "max", "sorted", "reversed",
+    "enumerate", "zip", "map", "filter", "any", "all",
+    # 数值
+    "abs", "round", "pow", "divmod",
+    # 类型构造 / 转换
+    "int", "float", "str", "bool", "list", "dict", "set", "tuple", "frozenset",
+    "isinstance", "repr", "format",
+    "chr", "ord", "hex", "oct", "bin", "hash",
+    # 迭代器
+    "iter", "next", "slice",
 }
-# 危险 import 顶层名（运行时门卫的镜像，AST 层先拦，给更友好报错）
-_DANGEROUS_IMPORT_NAMES = set(_FORBIDDEN_IMPORTS)
 
 
 def _check_ast_safety(code: str) -> None:
-    """静态扫描用户代码 AST：
-    - import / from-import 危险模块 → 拒绝
-    - 调用危险内置(open/eval/exec/...) → 拒绝
-    - 属性链含 __class__ / __subclasses__ / __globals__ / __builtins__ 等逃逸探针 → 拒绝
-    - 访问危险 dunder 属性 → 拒绝
+    """静态扫描用户代码 AST（**白名单模式**）：白名单之外一律拒绝。
+
+    四类检查：
+      1. import / from-import：模块必须在 _ALLOWED_IMPORTS
+      2. 调用（按名字）：被调函数名必须在 _ALLOWED_CALL_NAMES
+      3. 属性访问：**禁止一切 dunder**（__xxx__）—— 逃逸链的必经之路。
+         对比 v2 的"列举 10 个危险 dunder"，这里改成默认拒绝，
+         因此 __getattribute__ 之类同样被拦，不再是漏网之鱼。
+      4. 字符串字面量：禁止含 "__" —— 防 "{0.__class__}".format(obj) 这类
+         "把属性访问藏进字符串、由 str.format 在运行期解析"的绕过。
     """
     import ast
     try:
         tree = ast.parse(code)
-    except SyntaxError as e:
+    except SyntaxError:
         # 语法错误交给运行时 exec 报（让用户看到真实语法错），这里不拦
         return
 
@@ -111,45 +120,36 @@ def _check_ast_safety(code: str) -> None:
         lineno = getattr(node, "lineno", "?")
         raise SyntaxError(f"沙箱安全拦截（第{lineno}行）：{why}")
 
+    _mods_hint = "/".join(sorted(_ALLOWED_IMPORTS))
+    _fns_hint = ", ".join(sorted(_ALLOWED_CALL_NAMES)[:10])
+
     for node in ast.walk(tree):
-        # 1) import / from import
+        # 1) import / from import —— 白名单
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top = alias.name.split(".")[0]
-                if top in _DANGEROUS_IMPORT_NAMES:
-                    _err(node, f"禁止 import 模块 '{top}'")
+                if top not in _ALLOWED_IMPORTS:
+                    _err(node, f"沙箱仅允许 import 计算类库（{_mods_hint}），不允许 '{top}'")
         elif isinstance(node, ast.ImportFrom):
             top = (node.module or "").split(".")[0]
-            if node.module and top in _DANGEROUS_IMPORT_NAMES:
-                _err(node, f"禁止 from {node.module} import")
-            for alias in node.names:
-                if alias.name in ("open",):
-                    _err(node, "禁止 from ... import open")
+            if not node.module or top not in _ALLOWED_IMPORTS:
+                _err(node, f"沙箱仅允许 from 计算类库 import，不允许 'from {node.module}'")
 
-        # 2) 危险内置调用
+        # 2) 调用 —— 只校验"直接名字调用"（如 open(...)）；对象方法调用不在此列
         elif isinstance(node, ast.Call):
             f = node.func
-            # 直接名字调用：open("..")
-            if isinstance(f, ast.Name) and f.id in _DANGEROUS_CALL_NAMES:
-                _err(node, f"禁止调用 {f.id}()")
-            # 属性调用：xxx.open / io.open / os.system 之类（dunder 探针已在下方拦）
-            if isinstance(f, ast.Attribute) and f.attr in ("open",):
-                # 允许 obj.open 吗？不允许 —— open 必须整名
-                _err(node, "禁止调用 .open()")
+            if isinstance(f, ast.Name) and f.id not in _ALLOWED_CALL_NAMES:
+                _err(node, f"沙箱仅允许调用计算类内置函数（{_fns_hint} 等），不允许 {f.id}()")
 
-        # 3) 逃逸探针：属性访问 __xxx__
+        # 3) 属性访问 —— 禁止一切 dunder（逃逸链必经：obj.__class__ / __globals__ / ...）
         elif isinstance(node, ast.Attribute):
             if node.attr.startswith("__") and node.attr.endswith("__"):
-                if node.attr in ("__class__", "__globals__", "__subclasses__",
-                                 "__bases__", "__mro__", "__builtins__", "__loader__",
-                                 "__spec__", "__init__", "__dict__"):
-                    _err(node, f"禁止访问特殊属性 {node.attr}")
-                # 其它 dunder(如 __name__)放行
+                _err(node, f"禁止访问特殊属性 {node.attr}")
 
-        # 4) 禁止的 builtin 名直接引用(非调用，如 print(open))
-        elif isinstance(node, ast.Name):
-            if node.id in ("__import__",):
-                _err(node, "禁止引用 __import__")
+        # 4) 字符串字面量 —— 禁止含 "__"（防 format 注入式逃逸）
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "__" in node.value:
+                _err(node, "字符串中禁止包含 '__'")
 
 
 

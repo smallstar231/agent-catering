@@ -4,9 +4,11 @@
 #       但不能通过本工具修改/删除数据。
 # 安全设计（多层只读保证）：
 #   1. SQL 语法层：仅允许以 SELECT 开头的单条查询；禁多语句(;) / 注释混淆 / 危险表。
-#   2. 表白名单：只允许查询业务表，禁 employee(管理员/密码)、user(用户隐私) 等敏感表。
+#   2. 表白名单：只允许查询业务表；禁 employee(管理员/密码)、user(用户隐私)、
+#      address_book(收货人隐私) 等敏感表 —— 白名单外 + 敏感词兜底扫描双重拦截。
 #   3. 行数上限：强制 LIMIT（缺省补 100，拒绝无 LIMIT 且可能全表拉取的大查询）。
-#   4. 连接层：用 .env 配的只读 DB 账号（无则回退提示配置），MySQL 权限层兜底。
+#   4. 连接层：用 .env 配的只读 DB 账号；★密码必须显式配置（无弱口令兜底），
+#      未配置则直接拒绝查询，MySQL 权限层兜底。
 #   5. 超时/结果截断，绝不向 Agent 抛异常。
 
 import os
@@ -18,10 +20,13 @@ from utils import config_handler  # 触发 .env 加载
 
 # ---- 配置（根 .env）----
 # DB_READ_HOST / DB_READ_PORT / DB_READ_USER / DB_READ_PASSWORD / DB_READ_NAME
+# ★ 密码策略与 agent_tools.py 的 SKY_ADMIN_PASSWORD 保持一致：**不做弱口令兜底**。
+#   原先回退 "123456" 会在 .env 未配全时静默用 root+123456 连库、且无任何告警；
+#   现改为"未配置即拒绝查询"，把配置缺失暴露成明确提示。
 _DEF_HOST = "localhost"
 _DEF_PORT = 3306
 _DEF_USER = "root"          # 本地学习默认；生产务必换最小权限只读账号
-_DEF_PASSWORD = "123456"
+_DEF_PASSWORD = ""          # 安全：无默认口令，必须由 .env 的 DB_READ_PASSWORD 提供
 _DEF_DB = "sky_take_out"
 
 
@@ -44,12 +49,16 @@ def _connect_params() -> dict:
 
 
 # 允许查询的业务表（苍穹外卖 sky_take_out）。不在列表内的表拒绝（防查敏感/系统表）。
+# 注：address_book（收货地址簿）**已移出白名单** —— 含收货人姓名/手机号/详细地址，
+#     与已禁的 user 表同属隐私数据；且 orders 表本身已冗余 consignee/phone/address，
+#     查订单地址不需要 join 地址簿。
 _ALLOWED_TABLES = {
     "category", "dish", "dish_flavor", "setmeal", "setmeal_dish",
-    "orders", "order_detail", "shopping_cart", "address_book",
+    "orders", "order_detail", "shopping_cart",
 }
-# 显式禁止的敏感表（即使未来加了权限也不该经本工具暴露）
-_FORBIDDEN_TABLES = {"employee", "user"}
+# 显式禁止的敏感表（即使未来加了权限也不该经本工具暴露）。
+# 这里同时是"兜底扫描"的词表 —— 见 _validate_select 第 4a 步。
+_FORBIDDEN_TABLES = {"employee", "user", "address_book"}
 
 # 单次最多返回行数
 _MAX_ROWS = 100
@@ -57,20 +66,41 @@ _MAX_ROWS = 100
 _MAX_CELL_CHARS = 80
 
 
-def _extract_tables(sql: str) -> set:
-    """从 SQL 中提取所有出现的表名（含 join/子查询的 from/join 后）。"""
-    # 去掉字符串字面量，避免 'xxx' 里的词被误当表名
+def _strip_sql_noise(sql: str) -> str:
+    """去掉字符串字面量与注释，避免其中的词被误判为表名/敏感词。"""
     s = re.sub(r"'[^']*'", "''", sql, flags=re.S)
     s = re.sub(r'"[^"]*"', '""', s, flags=re.S)
-    # 去注释
-    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)
-    s = re.sub(r"--[^\n]*", " ", s)
+    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)   # 块注释
+    s = re.sub(r"--[^\n]*", " ", s)                 # 行注释
+    return s
+
+
+# FROM 子句的终止词：遇到这些关键字说明表名列表已结束
+_FROM_CLAUSE_STOP = (
+    r"(?=\b(?:where|group|order|having|limit|union|on|join|left|right|inner|outer|"
+    r"cross|using|natural|straight_join)\b|$)"
+)
+
+
+def _extract_tables(sql: str) -> set:
+    """从 SQL 中提取所有出现的表名（含 join / 子查询 / 逗号连接多表）。"""
+    s = _strip_sql_noise(sql)
     tables = set()
-    # 匹配 from / join 后的标识符（可带 db. 前缀，取最后一段）
-    for m in re.finditer(r"\b(?:from|join)\s+([`]?[\w.]+[`]?)", s, re.I):
-        t = m.group(1).strip("`")
-        t = t.split(".")[-1]  # 去掉库名前缀
-        tables.add(t.lower())
+    # ★ 取 from / join 之后、到下一个子句关键字之前的整段"表名列表"，
+    #   再按逗号切分，每段取第一个 token 作表名（自动跳过 AS 别名与表别名）。
+    #   原实现的正则只吃紧邻的第一个标识符 → "FROM orders, employee" 里的
+    #   employee 会逃过白名单检查（已修复，并由第 4a 步的兜底扫描二次兜住）。
+    for m in re.finditer(rf"\b(?:from|join)\s+(.+?){_FROM_CLAUSE_STOP}", s, re.I | re.S):
+        for part in m.group(1).split(","):
+            toks = part.strip().split()
+            if not toks:
+                continue
+            name = toks[0].strip("`")           # 每段的第一个 token 才是表名
+            if name.startswith("("):            # 子查询：其内部 FROM 会被另行匹配，跳过
+                continue
+            t = name.split(".")[-1]             # 去掉库名前缀
+            if t:
+                tables.add(t.lower())
     return tables
 
 
@@ -96,13 +126,20 @@ def _validate_select(sql: str) -> str:
         sql, re.I)
     if danger:
         raise ValueError(f"检测到被禁止的 SQL 操作：{danger[0]}")
-    # 4) 表白名单
+    # 4) 敏感表拦截 + 表白名单
+    # 4a) 敏感表**兜底扫描**：不看语法位置，SQL 原文出现敏感表名就拒绝。
+    #     目的：堵住"表名识别"可能漏掉的写法（逗号连接 / CTE / 别名 / 未来未知形式）。
+    #     取向是"保守拒绝"——宁可误拒，不可漏检；
+    #     `\b` 词边界保证 user_id / address_book_id 这类"名字里含敏感词"的列不被误伤
+    #     （"user" 后紧跟 "_" 属词内字符，不构成词边界）。
+    raw = _strip_sql_noise(sql)
+    for t in sorted(_FORBIDDEN_TABLES):
+        if re.search(rf"\b{re.escape(t)}\b", raw, re.I):
+            raise ValueError(f"禁止查询敏感表：{t}")
+    # 4b) 白名单：识别到的表必须全部落在业务表白名单内
     tables = _extract_tables(sql)
     if not tables:
         raise ValueError("未能识别查询的表（请写清楚 FROM/JOIN 表名）")
-    bad = tables & _FORBIDDEN_TABLES
-    if bad:
-        raise ValueError(f"禁止查询敏感表：{'、'.join(sorted(bad))}")
     unknown = tables - _ALLOWED_TABLES
     if unknown:
         raise ValueError(f"不在允许查询的业务表内：{'、'.join(sorted(unknown))}")
@@ -144,6 +181,10 @@ def db_query_sql(sql: str) -> str:
         return f"【db_query】{e}"
 
     params = _connect_params()
+    # ★ 密码必须显式配置：不再回退 "123456" 弱口令（缺失即拒绝，不尝试连接）
+    if not params.get("password"):
+        logger.error("[db_query]未配置 DB_READ_PASSWORD（请在 .env 设置），已跳过查询")
+        return "【db_query】未配置数据库密码，请在 .env 设置 DB_READ_PASSWORD 后再试。"
     try:
         import pymysql
     except ImportError:
@@ -178,7 +219,7 @@ def db_query_sql(sql: str) -> str:
     "时才使用本工具。"
     "入参 sql 为一条 SELECT 查询，如 'SELECT name,price FROM dish WHERE status=1 LIMIT 10'。"
     "仅支持只读查询；可查的表：category/dish/dish_flavor/setmeal/setmeal_dish/"
-    "orders/order_detail/shopping_cart/address_book。自动限制最多 100 行。"))
+    "orders/order_detail/shopping_cart。自动限制最多 100 行。"))
 def db_query(sql: str) -> str:
     """Agent 自主写只读 SQL 查询业务数据。"""
     logger.info(f"[db_query]收到 SQL：{sql[:120]}")

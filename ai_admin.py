@@ -2,6 +2,26 @@
 # 挂到 api_service.py： from ai_admin import router as ai_router; app.include_router(ai_router)
 # 前端（sky-admin-front /ai 页）直连本服务 :8000 调这些接口。
 # 说明：配置修改写回 config/*.yml（写前自动备份 .bak），"重启 Agent 生效"。
+#
+# ┌─【本文件速览】─────────────────────────────────────────────────────┐
+# │ 项目位置：应用层（AI 运维后台，与"对话接口"并列的另一组 API）         │
+# │ 上游：config_handler（内存配置）、file_handler、vector_store、        │
+# │       multimodal_store、session_store、evaluation、faq_tool          │
+# │ 下游：前端 ai-config/index.vue（经 api/ai.ts 调用）                  │
+# │ 路由前缀：/ai（APIRouter(prefix="/ai")），共 10 个端点：             │
+# │   GET  /ai/config         汇总可配置项（供前端展示）                 │
+# │   PUT  /ai/config         ★ 批量改配置：写回 yml + 同步内存字典      │
+# │   GET  /ai/model-options  5 类模型的当前值+候选+落点                 │
+# │   GET  /ai/kb             双场景文本/图文集合统计 + 源文件列表        │
+# │   POST /ai/kb/upload      ★ 页面上传知识文件入库（含防路径穿越）     │
+# │   GET  /ai/faq            FAQ 列表                                 │
+# │   GET/DELETE /ai/sessions 会话管理（列表/删除）                      │
+# │   GET  /ai/eval/sample    评测样例                                  │
+# │   POST /ai/eval           触发离线评估                              │
+# │ 鉴权：全部端点挂 Depends(require_admin_token)（opt-in，见 admin_auth）│
+# │ 关键机制：配置分「磁盘 yml ↔ 内存 *_conf」两层，PUT 时两者都改 →     │
+# │   开关类即时生效；但模型类仍受 model.factory 单例固化限制（需重启）  │
+# └────────────────────────────────────────────────────────────────────┘
 
 import os
 import shutil
@@ -214,8 +234,13 @@ def put_ai_config(req: AiConfigUpdate):
                 _dset(mem, it.path, it.value)
 
     # 判断是否涉及"启动时构造单例"的模型项（这类仍需重启才真正生效）
+    # 注：multimodal.model 同样是"构造实例时读一次"——
+    #     MultimodalVectorStore.__init__ 读 rag.yml 的 multimodal.model，
+    #     而它由 RagSummarizeService 在模块级创建（agent_tools.py 的 rag/rag_sky），
+    #     故改它同样需重启；漏在此集合会导致界面错误提示"已即时生效"。
     model_paths = {"chat_model_name", "embedding_model_name", "rerank.model",
-                   "rerank.fallback_model", "vision_model_name"}
+                   "rerank.fallback_model", "vision_model_name",
+                   "multimodal.model"}
     needs_restart = any(it.file == "rag" and it.path in model_paths for it in req.items)
     msg = ("已保存并即时生效。" if not needs_restart
            else "已保存并更新内存配置；但模型项由启动时构造的 LLM 单例使用，切换模型需重启 Agent 服务。")
